@@ -30,12 +30,12 @@ permissions:
 
 concurrency:
   group: alpha-dashboard
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   scan-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 25
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
