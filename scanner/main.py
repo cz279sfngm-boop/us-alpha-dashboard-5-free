@@ -19,8 +19,15 @@ CACHE = ROOT / ".cache"
 HIST = CACHE / "ohlcv"
 HIST.mkdir(parents=True, exist_ok=True)
 
-UA = "USMultiHorizonAlphaDashboard/5.0 free-github-actions research tool"
-HEADERS = {"User-Agent": UA, "Accept": "application/json,text/plain,*/*"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/141 Safari/537.36",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9"
+}
+SEC_HEADERS = {
+    "User-Agent": "USMultiHorizonAlphaDashboard/5.0 research contact via GitHub repository",
+    "Accept": "application/json,text/plain,*/*"
+}
 
 THEMES = {
     "AI Infrastructure": re.compile(r"semiconductor|chip|computer hardware|server|network|data center|electronic components", re.I),
@@ -106,11 +113,12 @@ def themes_for(name:str,sector:str,industry:str)->list[str]:
     text=f"{name} {sector} {industry}"
     return [k for k,p in THEMES.items() if p.search(text)]
 
-def http_json(url:str,retries=3,timeout=18)->Any:
+def http_json(url:str,retries=3,timeout=35)->Any:
     last=None
+    headers=SEC_HEADERS if "sec.gov" in url else HEADERS
     for attempt in range(retries):
         try:
-            r=requests.get(url,headers=HEADERS,timeout=timeout)
+            r=requests.get(url,headers=headers,timeout=timeout)
             if r.status_code==429:
                 time.sleep(1.5*(attempt+1)); continue
             r.raise_for_status(); return r.json()
