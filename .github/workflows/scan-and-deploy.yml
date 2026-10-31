@@ -11,6 +11,7 @@ on:
     branches: [main]
     paths:
       - 'scanner/**'
+      - 'site/**'
       - 'requirements.txt'
       - '.github/workflows/scan-and-deploy.yml'
   schedule:
