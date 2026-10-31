@@ -7,6 +7,12 @@ on:
         description: Scan mode label
         required: false
         default: manual
+  push:
+    branches: [main]
+    paths:
+      - 'scanner/**'
+      - 'requirements.txt'
+      - '.github/workflows/scan-and-deploy.yml'
   schedule:
     - cron: '30 8 * * 1-5'
       timezone: 'America/New_York'
@@ -60,7 +66,7 @@ jobs:
           ALPHA_WORKERS: '10'
         run: |
           MODE="${{ github.event.inputs.mode }}"
-          if [ -z "$MODE" ]; then MODE="scheduled-${{ github.event.schedule }}"; fi
+          if [ -z "$MODE" ]; then MODE="push-or-scheduled-${{ github.event.schedule }}"; fi
           python scanner/main.py --mode "$MODE" --output site/data/latest.json
 
       - name: Configure Pages
