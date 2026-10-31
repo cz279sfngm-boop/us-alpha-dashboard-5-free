@@ -1,0 +1,15 @@
+{
+  "version": "5.0-free",
+  "generatedAt": "",
+  "mode": "waiting-first-scan",
+  "universeStats": {},
+  "dataGovernance": {
+    "deepScanScope": "Waiting for first GitHub Actions scan",
+    "marketSource": "Nasdaq public screener + Yahoo Finance public chart interface",
+    "fundamentalSource": "SEC Company Facts",
+    "historyCache": "GitHub Actions cache"
+  },
+  "catalog": {"sectors": [], "industries": [], "themes": []},
+  "candidates": [],
+  "failures": []
+}
