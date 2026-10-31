@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#06111a" />
+  <title>US Multi-Horizon Alpha Dashboard 5.0 Free</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">US MULTI-HORIZON ALPHA DASHBOARD 5.0 · FREE RUNTIME</div>
+        <h1>Full-Market Alpha Discovery <span>GitHub Edition</span></h1>
+        <p>Nasdaq Universe → Yahoo Daily Cache → WT/MF → S/M/G → Sector/Theme → Research Watchlist</p>
+      </div>
+      <div class="heroBadge">No paid runtime</div>
+    </header>
+
+    <div id="status" class="status">正在讀取最新掃描資料…</div>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="panel governance">
+      <div class="panelHead">
+        <div><h2>Data Governance</h2><p>完整區分 Universe、Deep Processing 與真正資料覆蓋。</p></div>
+      </div>
+      <div id="governance" class="cards"></div>
+    </section>
+
+    <section class="panel discovery">
+      <div class="panelHead">
+        <div><h2>Sector / Industry / Theme Discovery</h2><p>Sector/Industry 來自 Nasdaq 欄位；Theme 是 deterministic research tags。</p></div>
+      </div>
+      <div class="filters compact">
+        <label>Sector<select id="sector"><option value="">全部</option></select></label>
+        <label>Industry<select id="industry"><option value="">全部</option></select></label>
+        <label>Theme<select id="theme"><option value="">全部</option></select></label>
+        <label>Horizon<select id="horizon"><option value="ALL">全部</option><option value="S">短期 S</option><option value="M">中期 M</option><option value="G">長期 G</option><option value="SMG">SMG 共振</option></select></label>
+      </div>
+    </section>
+
+    <section class="panel screener">
+      <div class="panelHead">
+        <div><h2>Interactive Screener</h2><p>這些條件會即時套用目前最多50隻 Research Watchlist；不會冒充全市場匹配數。</p></div>
+        <div class="actions">
+          <button id="resetBtn">Reset</button>
+          <button id="saveBtn">Save</button>
+          <button id="restoreBtn">Restore</button>
+          <button id="exportBtn">Export CSV</button>
+        </div>
+      </div>
+      <div class="filters">
+        <label>Min Market Cap (USD M)<input id="minCap" type="number" /></label>
+        <label>Min Price<input id="minPrice" type="number" step="0.01" /></label>
+        <label>Max Price<input id="maxPrice" type="number" step="0.01" /></label>
+        <label>Min RVOL<input id="minRvol" type="number" step="0.1" /></label>
+        <label>Min RS20<input id="minRS" type="number" step="0.1" /></label>
+        <label>Min Revenue Growth %<input id="minRev" type="number" step="0.1" /></label>
+        <label>Min ROIC %<input id="minRoic" type="number" step="0.1" /></label>
+        <label>Min WT Score<input id="minWT" type="number" min="0" max="100" /></label>
+        <label>Min MF Score<input id="minMF" type="number" min="0" max="100" /></label>
+        <label>Min Indicator<input id="minInd" type="number" min="0" max="100" /></label>
+      </div>
+    </section>
+
+    <section class="panel candidates">
+      <div class="panelHead stackOnMobile">
+        <div><h2>Research Watchlist</h2><p id="resultMeta">—</p></div>
+        <div class="sorts">
+          <label>排序<select id="sortKey">
+            <option value="dScore">Consensus</option><option value="sScore">S</option><option value="mScore">M</option><option value="gScore">G</option>
+            <option value="waveTrendScore">WT</option><option value="mfScore">MF</option><option value="indicatorScore">Indicator</option>
+            <option value="rvol">RVOL</option><option value="rs20">RS20</option><option value="marketCap">Market Cap</option>
+          </select></label>
+          <label>方向<select id="sortDir"><option value="desc">高至低</option><option value="asc">低至高</option></select></label>
+        </div>
+      </div>
+      <div class="tabs" id="tabs"></div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr>
+            <th>股票</th><th>價格</th><th>S</th><th>M</th><th>G</th><th>Con.</th><th>RVOL</th><th>RS20</th>
+            <th>WT</th><th>MF</th><th>Ind</th><th>Rev Growth</th><th>ROIC</th><th>Sector / Industry</th><th>Pool</th><th>狀態</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel detail" id="detailPanel" hidden>
+      <div class="panelHead"><div><h2 id="detailTitle">Candidate Detail</h2><p id="detailSub"></p></div><button id="closeDetail">關閉</button></div>
+      <div id="detailGrid" class="detailGrid"></div>
+      <div class="explain">
+        <h3>Indicator Engine</h3>
+        <p><b>WaveTrend</b>：依使用者提供 Pine 代碼的 9/12/3 與 HLC3 重建，輸出 WT1、WT2、WT-VWAP、最近 Cross、OB/OS。</p>
+        <p><b>Market Cipher MF</b>：使用 MF 5/5/60，並以 Price Pivot 5/5 計算 confirmed bullish/bearish divergence。</p>
+        <p><b>時間框架</b>：Yahoo cached Daily bars（1D）。不宣稱與 TradingView 2H/4H 完全相同。</p>
+      </div>
+    </section>
+
+    <section class="panel notes">
+      <h2>閱讀方式</h2>
+      <div class="cards">
+        <article><b>S</b><p>1日–3星期。偏量價、RS、breakout、VCP 與短期執行。</p></article>
+        <article><b>M</b><p>3星期–6個月。偏中期趨勢、基本面改善與機構累積。</p></article>
+        <article><b>G</b><p>6個月–5年。偏收入、FCF、ROE/ROIC、margin 與長期結構。</p></article>
+        <article><b>Score</b><p>模型排序，不是勝率。缺失數據會限制分數，90+ 應相對少見。</p></article>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
