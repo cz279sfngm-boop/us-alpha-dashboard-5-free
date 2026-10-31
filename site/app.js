@@ -1,30 +1,348 @@
-let DB=null, activeTab='ALL', filtered=[];
-const $=id=>document.getElementById(id);
-const num=(v,d=1)=>v===null||v===undefined||Number.isNaN(Number(v))?'資料不足':Number(v).toFixed(d);
-const pct=v=>v===null||v===undefined?'資料不足':`${Number(v)>=0?'+':''}${Number(v).toFixed(1)}%`;
-const money=v=>{if(v===null||v===undefined)return'資料不足';v=Number(v);if(Math.abs(v)>=1e9)return'$'+(v/1e9).toFixed(1)+'B';if(Math.abs(v)>=1e6)return'$'+(v/1e6).toFixed(1)+'M';return'$'+v.toFixed(0)};
-function metric(label,value){return `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`}
-async function boot(){try{const r=await fetch('data/latest.json',{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);DB=await r.json();renderAll();$('status').textContent=`最後掃描：${new Date(DB.generatedAt).toLocaleString('zh-HK')} · ${DB.mode}`;}catch(e){$('status').classList.add('error');$('status').textContent='尚未有可用掃描資料。首次 GitHub Action 完成後會自動出現；這不是「0隻候選」。';}}
-function renderAll(){const u=DB.universeStats||{};$('metrics').innerHTML=[metric('Total Discovered',u.totalDiscovered??'—'),metric('Eligible Common',u.eligibleCommonStocks??'—'),metric('Deep Attempted',u.deepAttempted??'—'),metric('Deep Processed',u.successfullyProcessed??'—'),metric('True Coverage',`${Number(u.coveragePct||0).toFixed(1)}%`),metric('Failures',u.scanFailures??'—')].join('');const g=DB.dataGovernance||{};$('governance').innerHTML=`<div><b>Deep Scan Scope</b><p>${g.deepScanScope||'—'}</p></div><div><b>Market Source</b><p>${g.marketSource||'—'}</p></div><div><b>Fundamental Source</b><p>${g.fundamentalSource||'—'}</p></div><div><b>History Cache</b><p>${g.historyCache||'—'}</p></div>`;fillSelect('sector',DB.catalog?.sectors||[]);fillSelect('theme',DB.catalog?.themes||[]);updateIndustryOptions();renderTabs();apply();}
-function fillSelect(id,arr){const el=$(id);const first=el.options[0].outerHTML;el.innerHTML=first+arr.map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${x.count})</option>`).join('')}
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function updateIndustryOptions(){const sector=$('sector').value;const counts={};(DB?.universeLite||[]).forEach(x=>{if((!sector||x.sector===sector)&&x.industry)counts[x.industry]=(counts[x.industry]||0)+1});const arr=Object.entries(counts).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));const previous=$('industry').value;fillSelect('industry',arr);if(arr.some(x=>x.name===previous))$('industry').value=previous;else $('industry').value='';}
-function renderSectorUniverse(){const sector=$('sector').value,industry=$('industry').value,theme=$('theme').value;const deepSet=new Set((DB.candidates||[]).map(x=>x.symbol));let rows=(DB.universeLite||[]).filter(x=>(!sector||x.sector===sector)&&(!industry||x.industry===industry)&&(!theme||(x.themes||[]).includes(theme)));const deepMatches=rows.filter(x=>deepSet.has(x.symbol)).length;const coverage=rows.length?deepMatches/rows.length*100:0;$('sectorUniverseMeta').innerHTML='<b>Universe Match：'+rows.length+'</b> · Deep Watchlist Match：'+deepMatches+' · Deep Coverage：'+coverage.toFixed(1)+'% · <span>Universe 搜尋涵蓋全部 eligible 股票；S/M/G、WT/MF 只對 Deep Processed 股票提供。</span>';rows.sort((a,b)=>(b.dailyDollarVolume||0)-(a.dailyDollarVolume||0));const shown=rows.slice(0,40);$('sectorUniverseBody').innerHTML=shown.length?shown.map(x=>'<tr><td><div class="sym">'+esc(x.symbol)+'</div><div class="name">'+esc(x.name)+'</div></td><td>
-function renderTabs(){const tabs=['ALL','S','M','G','SM','MG','SMG'];$('tabs').innerHTML=tabs.map(t=>`<button class="${t===activeTab?'active':''}" data-tab="${t}">${t==='ALL'?'全部研究':t}</button>`).join('');document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab;renderTabs();apply()})}
-function getVal(id){const v=$(id).value;return v===''?null:Number(v)}
-function apply(){if(!DB)return;renderSectorUniverse();const sector=$('sector').value,industry=$('industry').value,theme=$('theme').value,horizon=$('horizon').value;const minCap=getVal('minCap'),minPrice=getVal('minPrice'),maxPrice=getVal('maxPrice'),minRvol=getVal('minRvol'),minRS=getVal('minRS'),minRev=getVal('minRev'),minRoic=getVal('minRoic'),minWT=getVal('minWT'),minMF=getVal('minMF'),minInd=getVal('minInd');filtered=(DB.candidates||[]).filter(c=>{const tags=String(c.pool||'').split(',');if(activeTab!=='ALL'&&!tags.includes(activeTab))return false;if(horizon!=='ALL'&&!tags.includes(horizon))return false;if(sector&&c.sector!==sector)return false;if(industry&&c.industry!==industry)return false;if(theme&&!(c.themes||[]).includes(theme))return false;if(minCap!==null&&c.marketCap/1e6<minCap)return false;if(minPrice!==null&&c.price<minPrice)return false;if(maxPrice!==null&&c.price>maxPrice)return false;if(minRvol!==null&&c.rvol<minRvol)return false;if(minRS!==null&&c.rs20<minRS)return false;if(minRev!==null&&(c.revenueGrowth===null||c.revenueGrowth<minRev))return false;if(minRoic!==null&&(c.roic===null||c.roic<minRoic))return false;if(minWT!==null&&c.waveTrendScore<minWT)return false;if(minMF!==null&&c.mfScore<minMF)return false;if(minInd!==null&&c.indicatorScore<minInd)return false;return true});const key=$('sortKey').value,dir=$('sortDir').value;filtered.sort((a,b)=>{const av=Number(a[key]??-Infinity),bv=Number(b[key]??-Infinity);return dir==='desc'?bv-av:av-bv});renderTable();}
-function renderTable(){$('resultMeta').textContent=`顯示 ${filtered.length} / ${(DB.candidates||[]).length} 隻 Research Watchlist · 排序只改顯示次序，不改 Pool 資格`;$('tbody').innerHTML=filtered.length?filtered.map(c=>`<tr data-sym="${esc(c.symbol)}"><td><div class="sym">${esc(c.symbol)}</div><div class="name">${esc(c.name)}</div></td><td>$${num(c.price,2)}</td><td class="score">${c.sScore}</td><td class="score">${c.mScore}</td><td class="score">${c.gScore}</td><td class="score">${c.dScore}</td><td>${num(c.rvol,2)}×</td><td>${num(c.rs20)}</td><td class="score">${c.waveTrendScore}</td><td class="score">${c.mfScore}</td><td class="score">${c.indicatorScore}</td><td>${pct(c.revenueGrowth)}</td><td>${pct(c.roic)}</td><td><div>${esc(c.sector||'Unclassified')}</div><div class="classify">${esc(c.industry||'')}</div></td><td>${esc(c.pool||'Research only')}</td><td><span class="pill ${esc(c.status)}">${esc(c.status)}</span></td></tr>`).join(''):`<tr><td colspan="16" class="empty">目前條件沒有匹配股票。這只代表 Research Watchlist 篩選結果為0，不代表沒有市場資料。</td></tr>`;document.querySelectorAll('#tbody tr[data-sym]').forEach(tr=>tr.onclick=()=>detail(tr.dataset.sym));}
-function detail(sym){const c=(DB.candidates||[]).find(x=>x.symbol===sym);if(!c)return;$('detailPanel').hidden=false;$('detailTitle').textContent=`${c.symbol} · Score Explainability`;$('detailSub').textContent=`${c.name} · ${c.sector||'Unclassified'} · ${c.industry||''}`;const items=[['Market Cap',money(c.marketCap)],['Price','$'+num(c.price,2)],['S / M / G',`${c.sScore} / ${c.mScore} / ${c.gScore}`],['Consensus',c.dScore],['RVOL',num(c.rvol,2)+'×'],['RS20',num(c.rs20)],['WT Score',c.waveTrendScore],['WT1 / WT2',`${num(c.wt1)} / ${num(c.wt2)}`],['WT-VWAP',num(c.wtVwap)],['WT Cross',`${c.wtCross}${c.wtBarsSinceCross==null?'':' · '+c.wtBarsSinceCross+' bars'}`],['MF Score',c.mfScore],['MF Value',num(c.mfValue)],['MF Divergence',`${c.mfDivergence}${c.mfDivBarsAgo==null?'':' · '+c.mfDivBarsAgo+' bars'}`],['Indicator',c.indicatorScore],['Revenue Growth',pct(c.revenueGrowth)],['EPS Growth',pct(c.epsGrowth)],['Operating Margin',pct(c.operatingMargin)],['ROE',pct(c.roe)],['ROIC',pct(c.roic)],['20D Dollar Volume',money(c.avgDollarTurnover20)],['52W Range',`${num(c.low52,2)}–${num(c.high52,2)}`],['Themes',(c.themes||[]).join(', ')||'—']];$('detailGrid').innerHTML=items.map(x=>`<div><span>${esc(x[0])}</span><b>${esc(x[1])}</b></div>`).join('');$('detailPanel').scrollIntoView({behavior:'smooth'})}
-function save(){localStorage.setItem('alpha5-free-filters',JSON.stringify(readFilters()))}function readFilters(){const ids=['sector','industry','theme','horizon','minCap','minPrice','maxPrice','minRvol','minRS','minRev','minRoic','minWT','minMF','minInd','sortKey','sortDir'];return Object.fromEntries(ids.map(id=>[id,$(id).value]))}function restore(){try{const x=JSON.parse(localStorage.getItem('alpha5-free-filters')||'{}');Object.entries(x).forEach(([k,v])=>{if($(k))$(k).value=v});apply()}catch{}}function reset(){['sector','industry','theme'].forEach(id=>$(id).value='');$('horizon').value='ALL';['minCap','minPrice','maxPrice','minRvol','minRS','minRev','minRoic','minWT','minMF','minInd'].forEach(id=>$(id).value='');activeTab='ALL';renderTabs();apply()}
-function exportCsv(){if(!filtered.length)return;const cols=['symbol','name','price','sScore','mScore','gScore','dScore','rvol','rs20','waveTrendScore','mfScore','indicatorScore','revenueGrowth','roic','sector','industry','pool','status'];const lines=[cols.join(','),...filtered.map(c=>cols.map(k=>'"'+String(c[k]??'').replace(/"/g,'""')+'"').join(','))];const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));a.download='alpha-dashboard-results.csv';a.click();URL.revokeObjectURL(a.href)}
-$('sector').addEventListener('input',()=>{updateIndustryOptions();apply()});['industry','theme','horizon','minCap','minPrice','maxPrice','minRvol','minRS','minRev','minRoic','minWT','minMF','minInd','sortKey','sortDir'].forEach(id=>$(id).addEventListener('input',apply));$('resetBtn').onclick=reset;$('saveBtn').onclick=save;$('restoreBtn').onclick=restore;$('exportBtn').onclick=exportCsv;$('closeDetail').onclick=()=>{$('detailPanel').hidden=true};boot();
-+num(x.price,2)+'</td><td>'+pct(x.changePct)+'</td><td>'+money(x.marketCap)+'</td><td>'+money(x.dailyDollarVolume)+'</td><td><div>'+esc(x.sector||'Unclassified')+'</div><div class="classify">'+esc(x.industry||'')+'</div></td><td>'+esc((x.themes||[]).join(', ')||'—')+'</td><td>'+(deepSet.has(x.symbol)?'<span class="pill WATCH">Deep</span>':'—')+'</td></tr>').join(''):'<tr><td colspan="8" class="empty">這個 Sector / Industry / Theme 在目前 eligible universe 沒有匹配股票。</td></tr>';}
+let DB = null;
+let activeTab = "ALL";
+let filtered = [];
 
-function renderTabs(){const tabs=['ALL','S','M','G','SM','MG','SMG'];$('tabs').innerHTML=tabs.map(t=>`<button class="${t===activeTab?'active':''}" data-tab="${t}">${t==='ALL'?'全部研究':t}</button>`).join('');document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab;renderTabs();apply()})}
-function getVal(id){const v=$(id).value;return v===''?null:Number(v)}
-function apply(){if(!DB)return;const sector=$('sector').value,industry=$('industry').value,theme=$('theme').value,horizon=$('horizon').value;const minCap=getVal('minCap'),minPrice=getVal('minPrice'),maxPrice=getVal('maxPrice'),minRvol=getVal('minRvol'),minRS=getVal('minRS'),minRev=getVal('minRev'),minRoic=getVal('minRoic'),minWT=getVal('minWT'),minMF=getVal('minMF'),minInd=getVal('minInd');filtered=(DB.candidates||[]).filter(c=>{const tags=String(c.pool||'').split(',');if(activeTab!=='ALL'&&!tags.includes(activeTab))return false;if(horizon!=='ALL'&&!tags.includes(horizon))return false;if(sector&&c.sector!==sector)return false;if(industry&&c.industry!==industry)return false;if(theme&&!(c.themes||[]).includes(theme))return false;if(minCap!==null&&c.marketCap/1e6<minCap)return false;if(minPrice!==null&&c.price<minPrice)return false;if(maxPrice!==null&&c.price>maxPrice)return false;if(minRvol!==null&&c.rvol<minRvol)return false;if(minRS!==null&&c.rs20<minRS)return false;if(minRev!==null&&(c.revenueGrowth===null||c.revenueGrowth<minRev))return false;if(minRoic!==null&&(c.roic===null||c.roic<minRoic))return false;if(minWT!==null&&c.waveTrendScore<minWT)return false;if(minMF!==null&&c.mfScore<minMF)return false;if(minInd!==null&&c.indicatorScore<minInd)return false;return true});const key=$('sortKey').value,dir=$('sortDir').value;filtered.sort((a,b)=>{const av=Number(a[key]??-Infinity),bv=Number(b[key]??-Infinity);return dir==='desc'?bv-av:av-bv});renderTable();}
-function renderTable(){$('resultMeta').textContent=`顯示 ${filtered.length} / ${(DB.candidates||[]).length} 隻 Research Watchlist · 排序只改顯示次序，不改 Pool 資格`;$('tbody').innerHTML=filtered.length?filtered.map(c=>`<tr data-sym="${esc(c.symbol)}"><td><div class="sym">${esc(c.symbol)}</div><div class="name">${esc(c.name)}</div></td><td>$${num(c.price,2)}</td><td class="score">${c.sScore}</td><td class="score">${c.mScore}</td><td class="score">${c.gScore}</td><td class="score">${c.dScore}</td><td>${num(c.rvol,2)}×</td><td>${num(c.rs20)}</td><td class="score">${c.waveTrendScore}</td><td class="score">${c.mfScore}</td><td class="score">${c.indicatorScore}</td><td>${pct(c.revenueGrowth)}</td><td>${pct(c.roic)}</td><td><div>${esc(c.sector||'Unclassified')}</div><div class="classify">${esc(c.industry||'')}</div></td><td>${esc(c.pool||'Research only')}</td><td><span class="pill ${esc(c.status)}">${esc(c.status)}</span></td></tr>`).join(''):`<tr><td colspan="16" class="empty">目前條件沒有匹配股票。這只代表 Research Watchlist 篩選結果為0，不代表沒有市場資料。</td></tr>`;document.querySelectorAll('#tbody tr[data-sym]').forEach(tr=>tr.onclick=()=>detail(tr.dataset.sym));}
-function detail(sym){const c=(DB.candidates||[]).find(x=>x.symbol===sym);if(!c)return;$('detailPanel').hidden=false;$('detailTitle').textContent=`${c.symbol} · Score Explainability`;$('detailSub').textContent=`${c.name} · ${c.sector||'Unclassified'} · ${c.industry||''}`;const items=[['Market Cap',money(c.marketCap)],['Price','$'+num(c.price,2)],['S / M / G',`${c.sScore} / ${c.mScore} / ${c.gScore}`],['Consensus',c.dScore],['RVOL',num(c.rvol,2)+'×'],['RS20',num(c.rs20)],['WT Score',c.waveTrendScore],['WT1 / WT2',`${num(c.wt1)} / ${num(c.wt2)}`],['WT-VWAP',num(c.wtVwap)],['WT Cross',`${c.wtCross}${c.wtBarsSinceCross==null?'':' · '+c.wtBarsSinceCross+' bars'}`],['MF Score',c.mfScore],['MF Value',num(c.mfValue)],['MF Divergence',`${c.mfDivergence}${c.mfDivBarsAgo==null?'':' · '+c.mfDivBarsAgo+' bars'}`],['Indicator',c.indicatorScore],['Revenue Growth',pct(c.revenueGrowth)],['EPS Growth',pct(c.epsGrowth)],['Operating Margin',pct(c.operatingMargin)],['ROE',pct(c.roe)],['ROIC',pct(c.roic)],['20D Dollar Volume',money(c.avgDollarTurnover20)],['52W Range',`${num(c.low52,2)}–${num(c.high52,2)}`],['Themes',(c.themes||[]).join(', ')||'—']];$('detailGrid').innerHTML=items.map(x=>`<div><span>${esc(x[0])}</span><b>${esc(x[1])}</b></div>`).join('');$('detailPanel').scrollIntoView({behavior:'smooth'})}
-function save(){localStorage.setItem('alpha5-free-filters',JSON.stringify(readFilters()))}function readFilters(){const ids=['sector','industry','theme','horizon','minCap','minPrice','maxPrice','minRvol','minRS','minRev','minRoic','minWT','minMF','minInd','sortKey','sortDir'];return Object.fromEntries(ids.map(id=>[id,$(id).value]))}function restore(){try{const x=JSON.parse(localStorage.getItem('alpha5-free-filters')||'{}');Object.entries(x).forEach(([k,v])=>{if($(k))$(k).value=v});apply()}catch{}}function reset(){['sector','industry','theme'].forEach(id=>$(id).value='');$('horizon').value='ALL';['minCap','minPrice','maxPrice','minRvol','minRS','minRev','minRoic','minWT','minMF','minInd'].forEach(id=>$(id).value='');activeTab='ALL';renderTabs();apply()}
-function exportCsv(){if(!filtered.length)return;const cols=['symbol','name','price','sScore','mScore','gScore','dScore','rvol','rs20','waveTrendScore','mfScore','indicatorScore','revenueGrowth','roic','sector','industry','pool','status'];const lines=[cols.join(','),...filtered.map(c=>cols.map(k=>'"'+String(c[k]??'').replace(/"/g,'""')+'"').join(','))];const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));a.download='alpha-dashboard-results.csv';a.click();URL.revokeObjectURL(a.href)}
-['sector','industry','theme','horizon','minCap','minPrice','maxPrice','minRvol','minRS','minRev','minRoic','minWT','minMF','minInd','sortKey','sortDir'].forEach(id=>$(id).addEventListener('input',apply));$('resetBtn').onclick=reset;$('saveBtn').onclick=save;$('restoreBtn').onclick=restore;$('exportBtn').onclick=exportCsv;$('closeDetail').onclick=()=>{$('detailPanel').hidden=true};boot();
+const $ = (id) => document.getElementById(id);
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[m]));
+}
+
+function num(v, d = 1) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "資料不足";
+  return Number(v).toFixed(d);
+}
+
+function pct(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "資料不足";
+  const n = Number(v);
+  return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
+}
+
+function money(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "資料不足";
+  const n = Number(v);
+  if (Math.abs(n) >= 1e9) return "$" + (n / 1e9).toFixed(1) + "B";
+  if (Math.abs(n) >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  return "$" + n.toFixed(0);
+}
+
+function metric(label, value) {
+  return '<div class="metric"><span>' + esc(label) + '</span><strong>' + esc(value) + '</strong></div>';
+}
+
+async function boot() {
+  try {
+    const r = await fetch("data/latest.json", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    DB = await r.json();
+    renderAll();
+    $("status").textContent = "最後掃描：" + new Date(DB.generatedAt).toLocaleString("zh-HK") + " · " + (DB.mode || "scan");
+  } catch (e) {
+    $("status").classList.add("error");
+    $("status").textContent = "尚未有可用掃描資料。這不是「0隻候選」，而是資料載入失敗。";
+  }
+}
+
+function fillSelect(id, arr) {
+  const el = $(id);
+  const first = el.options.length ? el.options[0].outerHTML : '<option value="">全部</option>';
+  el.innerHTML = first + arr.map((x) =>
+    '<option value="' + esc(x.name) + '">' + esc(x.name) + " (" + x.count + ")</option>"
+  ).join("");
+}
+
+function updateIndustryOptions() {
+  const sector = $("sector").value;
+  const counts = {};
+  (DB?.universeLite || []).forEach((x) => {
+    if ((!sector || x.sector === sector) && x.industry) {
+      counts[x.industry] = (counts[x.industry] || 0) + 1;
+    }
+  });
+  const arr = Object.entries(counts)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const previous = $("industry").value;
+  fillSelect("industry", arr);
+  $("industry").value = arr.some((x) => x.name === previous) ? previous : "";
+}
+
+function renderSectorUniverse() {
+  const sector = $("sector").value;
+  const industry = $("industry").value;
+  const theme = $("theme").value;
+  const deepSet = new Set((DB.candidates || []).map((x) => x.symbol));
+
+  let rows = (DB.universeLite || []).filter((x) =>
+    (!sector || x.sector === sector) &&
+    (!industry || x.industry === industry) &&
+    (!theme || (x.themes || []).includes(theme))
+  );
+
+  const deepMatches = rows.filter((x) => deepSet.has(x.symbol)).length;
+  const coverage = rows.length ? (deepMatches / rows.length) * 100 : 0;
+
+  $("sectorUniverseMeta").innerHTML =
+    "<b>Universe Match：" + rows.length + "</b> · Deep Watchlist Match：" + deepMatches +
+    " · Deep Coverage：" + coverage.toFixed(1) +
+    "% · <span>Universe 搜尋涵蓋全部 eligible 股票；S/M/G、WT/MF 只對 Deep Processed 股票提供。</span>";
+
+  rows.sort((a, b) => (b.dailyDollarVolume || 0) - (a.dailyDollarVolume || 0));
+  const shown = rows.slice(0, 40);
+
+  $("sectorUniverseBody").innerHTML = shown.length
+    ? shown.map((x) =>
+        '<tr>' +
+        '<td><div class="sym">' + esc(x.symbol) + '</div><div class="name">' + esc(x.name) + '</div></td>' +
+        "<td>$" + num(x.price, 2) + "</td>" +
+        "<td>" + pct(x.changePct) + "</td>" +
+        "<td>" + money(x.marketCap) + "</td>" +
+        "<td>" + money(x.dailyDollarVolume) + "</td>" +
+        "<td><div>" + esc(x.sector || "Unclassified") + '</div><div class="classify">' + esc(x.industry || "") + "</div></td>" +
+        "<td>" + esc((x.themes || []).join(", ") || "—") + "</td>" +
+        "<td>" + (deepSet.has(x.symbol) ? '<span class="pill WATCH">Deep</span>' : "—") + "</td>" +
+        "</tr>"
+      ).join("")
+    : '<tr><td colspan="8" class="empty">這個 Sector / Industry / Theme 在目前 eligible universe 沒有匹配股票。</td></tr>';
+}
+
+function renderTabs() {
+  const tabs = ["ALL", "S", "M", "G", "SM", "MG", "SMG"];
+  $("tabs").innerHTML = tabs.map((t) =>
+    '<button class="' + (t === activeTab ? "active" : "") + '" data-tab="' + t + '">' +
+    (t === "ALL" ? "全部研究" : t) + "</button>"
+  ).join("");
+
+  document.querySelectorAll("[data-tab]").forEach((b) => {
+    b.onclick = () => {
+      activeTab = b.dataset.tab;
+      renderTabs();
+      apply();
+    };
+  });
+}
+
+function getVal(id) {
+  const v = $(id).value;
+  return v === "" ? null : Number(v);
+}
+
+function apply() {
+  if (!DB) return;
+  renderSectorUniverse();
+
+  const sector = $("sector").value;
+  const industry = $("industry").value;
+  const theme = $("theme").value;
+  const horizon = $("horizon").value;
+
+  const minCap = getVal("minCap");
+  const minPrice = getVal("minPrice");
+  const maxPrice = getVal("maxPrice");
+  const minRvol = getVal("minRvol");
+  const minRS = getVal("minRS");
+  const minRev = getVal("minRev");
+  const minRoic = getVal("minRoic");
+  const minWT = getVal("minWT");
+  const minMF = getVal("minMF");
+  const minInd = getVal("minInd");
+
+  filtered = (DB.candidates || []).filter((c) => {
+    const tags = String(c.pool || "").split(",");
+    if (activeTab !== "ALL" && !tags.includes(activeTab)) return false;
+    if (horizon !== "ALL" && !tags.includes(horizon)) return false;
+    if (sector && c.sector !== sector) return false;
+    if (industry && c.industry !== industry) return false;
+    if (theme && !(c.themes || []).includes(theme)) return false;
+    if (minCap !== null && c.marketCap / 1e6 < minCap) return false;
+    if (minPrice !== null && c.price < minPrice) return false;
+    if (maxPrice !== null && c.price > maxPrice) return false;
+    if (minRvol !== null && c.rvol < minRvol) return false;
+    if (minRS !== null && c.rs20 < minRS) return false;
+    if (minRev !== null && (c.revenueGrowth === null || c.revenueGrowth < minRev)) return false;
+    if (minRoic !== null && (c.roic === null || c.roic < minRoic)) return false;
+    if (minWT !== null && c.waveTrendScore < minWT) return false;
+    if (minMF !== null && c.mfScore < minMF) return false;
+    if (minInd !== null && c.indicatorScore < minInd) return false;
+    return true;
+  });
+
+  const key = $("sortKey").value;
+  const dir = $("sortDir").value;
+  filtered.sort((a, b) => {
+    const av = Number(a[key] ?? -Infinity);
+    const bv = Number(b[key] ?? -Infinity);
+    return dir === "desc" ? bv - av : av - bv;
+  });
+
+  renderTable();
+}
+
+function renderTable() {
+  $("resultMeta").textContent =
+    "顯示 " + filtered.length + " / " + (DB.candidates || []).length +
+    " 隻 Research Watchlist · 排序只改顯示次序，不改 Pool 資格";
+
+  $("tbody").innerHTML = filtered.length
+    ? filtered.map((c) =>
+        '<tr data-sym="' + esc(c.symbol) + '">' +
+        '<td><div class="sym">' + esc(c.symbol) + '</div><div class="name">' + esc(c.name) + "</div></td>" +
+        "<td>$" + num(c.price, 2) + "</td>" +
+        '<td class="score">' + c.sScore + "</td>" +
+        '<td class="score">' + c.mScore + "</td>" +
+        '<td class="score">' + c.gScore + "</td>" +
+        '<td class="score">' + c.dScore + "</td>" +
+        "<td>" + num(c.rvol, 2) + "×</td>" +
+        "<td>" + num(c.rs20) + "</td>" +
+        '<td class="score">' + c.waveTrendScore + "</td>" +
+        '<td class="score">' + c.mfScore + "</td>" +
+        '<td class="score">' + c.indicatorScore + "</td>" +
+        "<td>" + pct(c.revenueGrowth) + "</td>" +
+        "<td>" + pct(c.roic) + "</td>" +
+        "<td><div>" + esc(c.sector || "Unclassified") + '</div><div class="classify">' + esc(c.industry || "") + "</div></td>" +
+        "<td>" + esc(c.pool || "Research only") + "</td>" +
+        '<td><span class="pill ' + esc(c.status) + '">' + esc(c.status) + "</span></td>" +
+        "</tr>"
+      ).join("")
+    : '<tr><td colspan="16" class="empty">目前條件沒有匹配股票。這只代表 Research Watchlist 篩選結果為0，不代表沒有市場資料。</td></tr>';
+
+  document.querySelectorAll("#tbody tr[data-sym]").forEach((tr) => {
+    tr.onclick = () => detail(tr.dataset.sym);
+  });
+}
+
+function detail(sym) {
+  const c = (DB.candidates || []).find((x) => x.symbol === sym);
+  if (!c) return;
+
+  $("detailPanel").hidden = false;
+  $("detailTitle").textContent = c.symbol + " · Score Explainability";
+  $("detailSub").textContent = c.name + " · " + (c.sector || "Unclassified") + " · " + (c.industry || "");
+
+  const items = [
+    ["Market Cap", money(c.marketCap)],
+    ["Price", "$" + num(c.price, 2)],
+    ["S / M / G", c.sScore + " / " + c.mScore + " / " + c.gScore],
+    ["Consensus", c.dScore],
+    ["RVOL", num(c.rvol, 2) + "×"],
+    ["RS20", num(c.rs20)],
+    ["WT Score", c.waveTrendScore],
+    ["WT1 / WT2", num(c.wt1) + " / " + num(c.wt2)],
+    ["WT-VWAP", num(c.wtVwap)],
+    ["WT Cross", c.wtCross + (c.wtBarsSinceCross == null ? "" : " · " + c.wtBarsSinceCross + " bars")],
+    ["MF Score", c.mfScore],
+    ["MF Value", num(c.mfValue)],
+    ["MF Divergence", c.mfDivergence + (c.mfDivBarsAgo == null ? "" : " · " + c.mfDivBarsAgo + " bars")],
+    ["Indicator", c.indicatorScore],
+    ["Revenue Growth", pct(c.revenueGrowth)],
+    ["EPS Growth", pct(c.epsGrowth)],
+    ["Operating Margin", pct(c.operatingMargin)],
+    ["ROE", pct(c.roe)],
+    ["ROIC", pct(c.roic)],
+    ["20D Dollar Volume", money(c.avgDollarTurnover20)],
+    ["52W Range", num(c.low52, 2) + "–" + num(c.high52, 2)],
+    ["Themes", (c.themes || []).join(", ") || "—"]
+  ];
+
+  $("detailGrid").innerHTML = items.map((x) =>
+    "<div><span>" + esc(x[0]) + "</span><b>" + esc(x[1]) + "</b></div>"
+  ).join("");
+
+  $("detailPanel").scrollIntoView({ behavior: "smooth" });
+}
+
+function readFilters() {
+  const ids = ["sector","industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","sortKey","sortDir"];
+  return Object.fromEntries(ids.map((id) => [id, $(id).value]));
+}
+
+function saveFilters() {
+  localStorage.setItem("alpha5-free-filters", JSON.stringify(readFilters()));
+}
+
+function restoreFilters() {
+  try {
+    const values = JSON.parse(localStorage.getItem("alpha5-free-filters") || "{}");
+    Object.entries(values).forEach(([k, v]) => {
+      if ($(k)) $(k).value = v;
+    });
+    updateIndustryOptions();
+    apply();
+  } catch (e) {}
+}
+
+function resetFilters() {
+  ["sector","industry","theme"].forEach((id) => $(id).value = "");
+  $("horizon").value = "ALL";
+  ["minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd"].forEach((id) => $(id).value = "");
+  activeTab = "ALL";
+  updateIndustryOptions();
+  renderTabs();
+  apply();
+}
+
+function exportCsv() {
+  if (!filtered.length) return;
+  const cols = ["symbol","name","price","sScore","mScore","gScore","dScore","rvol","rs20","waveTrendScore","mfScore","indicatorScore","revenueGrowth","roic","sector","industry","pool","status"];
+  const lines = [
+    cols.join(","),
+    ...filtered.map((c) => cols.map((k) => '"' + String(c[k] ?? "").replace(/"/g, '""') + '"').join(","))
+  ];
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = "alpha-dashboard-results.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function bindEvents() {
+  $("sector").addEventListener("input", () => {
+    updateIndustryOptions();
+    apply();
+  });
+
+  ["industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","sortKey","sortDir"].forEach((id) => {
+    $(id).addEventListener("input", apply);
+  });
+
+  $("resetBtn").onclick = resetFilters;
+  $("saveBtn").onclick = saveFilters;
+  $("restoreBtn").onclick = restoreFilters;
+  $("exportBtn").onclick = exportCsv;
+  $("closeDetail").onclick = () => { $("detailPanel").hidden = true; };
+}
+
+function renderAll() {
+  const u = DB.universeStats || {};
+  $("metrics").innerHTML = [
+    metric("Total Discovered", u.totalDiscovered ?? "—"),
+    metric("Eligible Common", u.eligibleCommonStocks ?? "—"),
+    metric("Deep Attempted", u.deepAttempted ?? "—"),
+    metric("Deep Processed", u.successfullyProcessed ?? "—"),
+    metric("True Coverage", Number(u.coveragePct || 0).toFixed(1) + "%"),
+    metric("Failures", u.scanFailures ?? "—")
+  ].join("");
+
+  const g = DB.dataGovernance || {};
+  $("governance").innerHTML =
+    "<div><b>Deep Scan Scope</b><p>" + esc(g.deepScanScope || "—") + "</p></div>" +
+    "<div><b>Market Source</b><p>" + esc(g.marketSource || "—") + "</p></div>" +
+    "<div><b>Fundamental Source</b><p>" + esc(g.fundamentalSource || "—") + "</p></div>" +
+    "<div><b>History Cache</b><p>" + esc(g.historyCache || "—") + "</p></div>";
+
+  fillSelect("sector", DB.catalog?.sectors || []);
+  fillSelect("theme", DB.catalog?.themes || []);
+  updateIndustryOptions();
+  renderTabs();
+  bindEvents();
+  apply();
+}
+
+boot();
