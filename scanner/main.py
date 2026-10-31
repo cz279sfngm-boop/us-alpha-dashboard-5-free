@@ -396,7 +396,11 @@ def scan(mode:str,output:Path,force=False)->None:
         for fut in cf.as_completed(futs):
             s=futs[fut]
             try:results.append(fut.result())
-            except Exception as e:failures.append({"symbol":s["symbol"],"error":str(e)[:160]})
+            except Exception as e:
+                msg=str(e)[:240]
+                failures.append({"symbol":s["symbol"],"error":msg})
+                if len(failures)<=12:
+                    print(f"DEEP_FAIL {s['symbol']}: {msg}", flush=True)
     cikmap={}
     try:cikmap=sec_ticker_map()
     except Exception:pass
