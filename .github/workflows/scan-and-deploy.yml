@@ -1,0 +1,76 @@
+name: Scan market and deploy dashboard
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Scan mode label
+        required: false
+        default: manual
+  schedule:
+    - cron: '30 8 * * 1-5'
+      timezone: 'America/New_York'
+    - cron: '0 10 * * 1-5'
+      timezone: 'America/New_York'
+    - cron: '45 16 * * 1-5'
+      timezone: 'America/New_York'
+    - cron: '0 11 * * 6'
+      timezone: 'America/New_York'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+environment:
+  name: github-pages
+  url: ${{ steps.deployment.outputs.page_url }}
+
+concurrency:
+  group: alpha-dashboard
+  cancel-in-progress: false
+
+jobs:
+  scan-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Restore Yahoo OHLCV cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: alpha-ohlcv-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            alpha-ohlcv-${{ runner.os }}-${{ github.ref_name }}-
+
+      - name: Install scanner dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run research scan
+        env:
+          ALPHA_WORKERS: '10'
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          if [ -z "$MODE" ]; then MODE="scheduled-${{ github.event.schedule }}"; fi
+          python scanner/main.py --mode "$MODE" --output site/data/latest.json
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
