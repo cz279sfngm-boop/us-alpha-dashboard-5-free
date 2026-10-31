@@ -142,9 +142,9 @@ def fetch_universe()->tuple[list[dict],dict]:
 def yahoo_url(symbol:str,range_:str)->str:
     return f"https://query1.finance.yahoo.com/v8/finance/chart/{requests.utils.quote(symbol)}?range={range_}&interval=1d&includePrePost=true&events=div%2Csplits"
 
-def fetch_bars(symbol:str,range_:str)->dict:
-    j=http_json(yahoo_url(symbol,range_)); z=(j.get("chart",{}).get("result") or [None])[0]
-    if not z: raise RuntimeError("no chart")
+def fetch_yahoo_bars(symbol:str,range_:str)->dict:
+    j=http_json(yahoo_url(symbol,range_),retries=1,timeout=15); z=(j.get("chart",{}).get("result") or [None])[0]
+    if not z: raise RuntimeError("Yahoo: no chart")
     q=((z.get("indicators") or {}).get("quote") or [{}])[0]
     adj=(((z.get("indicators") or {}).get("adjclose") or [{}])[0]).get("adjclose") or []
     ts=z.get("timestamp") or []; bars=[]
@@ -155,7 +155,57 @@ def fetch_bars(symbol:str,range_:str)->dict:
             bars.append({"date":dt.datetime.fromtimestamp(t,dt.timezone.utc).date().isoformat(),"open":o,"high":h,"low":l,"close":c,"adjClose":ac,"volume":v})
         except Exception: pass
     meta=z.get("meta") or {}; mt=meta.get("regularMarketTime")
-    return {"bars":bars,"marketDataAt":dt.datetime.fromtimestamp(mt,dt.timezone.utc).isoformat() if mt else None,"regularMarketPrice":nullable(meta.get("regularMarketPrice")),"splits":len((z.get("events") or {}).get("splits") or {}),"dividends":len((z.get("events") or {}).get("dividends") or {})}
+    return {"bars":bars,"marketDataAt":dt.datetime.fromtimestamp(mt,dt.timezone.utc).isoformat() if mt else None,"regularMarketPrice":nullable(meta.get("regularMarketPrice")),"splits":len((z.get("events") or {}).get("splits") or {}),"dividends":len((z.get("events") or {}).get("dividends") or {}),"provider":"Yahoo","adjustment":"adjusted-close"}
+
+def _nasdaq_number(v:Any)->float:
+    if v is None: raise ValueError("missing")
+    s=str(v).replace("$","").replace(",","").strip()
+    if not s or s in {"N/A","--"}: raise ValueError("missing")
+    return float(s)
+
+def fetch_nasdaq_bars(symbol:str,range_:str)->dict:
+    today=dt.datetime.now(dt.timezone.utc).date()
+    lookback=18 if range_=="10d" else 560
+    start=today-dt.timedelta(days=lookback)
+    params={
+        "assetclass":"stocks",
+        "fromdate":start.isoformat(),
+        "todate":today.isoformat(),
+        "limit":"5000"
+    }
+    url=f"https://api.nasdaq.com/api/quote/{requests.utils.quote(symbol)}/historical?"+requests.compat.urlencode(params)
+    j=http_json(url,retries=3,timeout=35)
+    rows=((((j.get("data") or {}).get("tradesTable") or {}).get("rows")) or [])
+    bars=[]
+    for row in rows:
+        try:
+            ds=str(row.get("date") or "").strip()
+            d=dt.datetime.strptime(ds,"%m/%d/%Y").date().isoformat()
+            o=_nasdaq_number(row.get("open")); h=_nasdaq_number(row.get("high")); l=_nasdaq_number(row.get("low"))
+            close=_nasdaq_number(row.get("close") if row.get("close") is not None else row.get("close/last"))
+            vol=_nasdaq_number(row.get("volume"))
+            if min(o,h,l,close)<=0: continue
+            bars.append({"date":d,"open":o,"high":h,"low":l,"close":close,"adjClose":close,"volume":vol})
+        except Exception:
+            continue
+    bars.sort(key=lambda x:x["date"])
+    if not bars: raise RuntimeError("Nasdaq historical: no bars")
+    return {"bars":bars,"marketDataAt":dt.datetime.now(dt.timezone.utc).isoformat(),"regularMarketPrice":bars[-1]["close"],"splits":0,"dividends":0,"provider":"Nasdaq Public Historical","adjustment":"raw-unadjusted"}
+
+def fetch_bars(symbol:str,range_:str)->dict:
+    preferred=os.getenv("ALPHA_HISTORY_PROVIDER","nasdaq").lower()
+    if preferred=="yahoo":
+        try:
+            return fetch_yahoo_bars(symbol,range_)
+        except Exception:
+            return fetch_nasdaq_bars(symbol,range_)
+    try:
+        return fetch_nasdaq_bars(symbol,range_)
+    except Exception as nasdaq_err:
+        try:
+            return fetch_yahoo_bars(symbol,range_)
+        except Exception as yahoo_err:
+            raise RuntimeError(f"Nasdaq={nasdaq_err}; Yahoo={yahoo_err}")
 
 def hist_path(symbol:str)->Path:
     return HIST/f"{symbol.replace('/','_')}.json"
@@ -175,7 +225,7 @@ def load_history(symbol:str,force=False)->dict:
     if not cached or len(cached.get("bars",[]))<205:
         d=fetch_bars(symbol,"1y")
         if len(d["bars"])<205:raise RuntimeError("short history")
-        out={"symbol":symbol,"bars":d["bars"][-370:],"marketDataAt":d["marketDataAt"],"refreshedAt":dt.datetime.now(dt.timezone.utc).isoformat(),"splits":d["splits"],"dividends":d["dividends"],"mode":"bootstrap"}
+        out={"symbol":symbol,"bars":d["bars"][-370:],"marketDataAt":d["marketDataAt"],"refreshedAt":dt.datetime.now(dt.timezone.utc).isoformat(),"splits":d["splits"],"dividends":d["dividends"],"mode":"bootstrap","provider":d.get("provider"),"adjustment":d.get("adjustment")}
     else:
         d=fetch_bars(symbol,"10d")
         if d["splits"]:
@@ -183,7 +233,7 @@ def load_history(symbol:str,force=False)->dict:
         else:
             merged={b["date"]:b for b in cached["bars"]}; merged.update({b["date"]:b for b in d["bars"]})
             bars=[merged[k] for k in sorted(merged)][-370:]; mode="incremental"
-        out={"symbol":symbol,"bars":bars,"marketDataAt":d["marketDataAt"] or cached.get("marketDataAt"),"refreshedAt":dt.datetime.now(dt.timezone.utc).isoformat(),"splits":max(cached.get("splits",0),d["splits"]),"dividends":max(cached.get("dividends",0),d["dividends"]),"mode":mode}
+        out={"symbol":symbol,"bars":bars,"marketDataAt":d["marketDataAt"] or cached.get("marketDataAt"),"refreshedAt":dt.datetime.now(dt.timezone.utc).isoformat(),"splits":max(cached.get("splits",0),d["splits"]),"dividends":max(cached.get("dividends",0),d["dividends"]),"mode":mode,"provider":d.get("provider") or cached.get("provider"),"adjustment":d.get("adjustment") or cached.get("adjustment")}
     path.write_text(json.dumps(out,separators=(",",":"))); return out
 
 def series_from_cache(cache:dict)->dict:
@@ -191,7 +241,7 @@ def series_from_cache(cache:dict)->dict:
     for b in cache["bars"]:
         close=float(b["close"]); adj=float(b.get("adjClose",close)); factor=adj/close if close else 1
         c.append(adj); h.append(float(b["high"])*factor); l.append(float(b["low"])*factor); v.append(float(b["volume"])); rawc.append(close); dates.append(b["date"])
-    return {"c":c,"h":h,"l":l,"v":v,"dates":dates,"rawClose":rawc,"lastPrice":rawc[-1],"marketDataAt":cache.get("marketDataAt"),"cacheMode":cache.get("mode")}
+    return {"c":c,"h":h,"l":l,"v":v,"dates":dates,"rawClose":rawc,"lastPrice":rawc[-1],"marketDataAt":cache.get("marketDataAt"),"cacheMode":cache.get("mode"),"historyProvider":cache.get("provider"),"historyAdjustment":cache.get("adjustment")}
 
 
 def wavetrend(h:list[float],l:list[float],c:list[float])->dict:
@@ -425,7 +475,7 @@ def scan(mode:str,output:Path,force=False)->None:
     payload={
         "version":"5.0-free","generatedAt":dt.datetime.now(dt.timezone.utc).isoformat(),"mode":mode,
         "universeStats":{**stats,"stage1Eligible":len([x for x in eligible if x["dailyDollarVolume"]>=5_000_000 and x["marketCap"]>=300_000_000]),"deepAttempted":len(seeds),"successfullyProcessed":len(results),"scanFailures":len(failures),"coveragePct":len(results)/len(eligible)*100 if eligible else 0,"latestUniverseRefresh":started.isoformat()},
-        "dataGovernance":{"deepScanScope":"Multi-path candidate deep scan, not full OHLCV coverage","marketSource":"Nasdaq public screener + Yahoo chart public interface","fundamentalSource":"SEC Company Facts","historyCache":"GitHub Actions cache (.cache/ohlcv), 1Y bootstrap + 10D incremental refresh","limitations":["No licensed analyst-consensus feed","No licensed news feed in free mode","Theme tags are deterministic research labels, not official exchange sectors"]},
+        "dataGovernance":{"deepScanScope":"Multi-path candidate deep scan, not full OHLCV coverage","marketSource":"Nasdaq public screener + Nasdaq Public Historical OHLCV; Yahoo chart is fallback only","fundamentalSource":"SEC Company Facts","historyCache":"GitHub Actions cache (.cache/ohlcv), 1Y bootstrap + 10D incremental refresh","limitations":["Nasdaq public historical bars are treated as raw/unadjusted OHLCV when Yahoo adjusted data is unavailable","No licensed analyst-consensus feed","No licensed news feed in free mode","Theme tags are deterministic research labels, not official exchange sectors"]},
         "catalog":{"sectors":sorted([{"name":k,"count":v} for k,v in sectors.items() if k],key=lambda x:(-x["count"],x["name"])),"industries":sorted([{"name":k,"count":v} for k,v in industries.items() if k],key=lambda x:(-x["count"],x["name"])),"themes":sorted([{"name":k,"count":v} for k,v in themes.items()],key=lambda x:(-x["count"],x["name"]))},
         "candidates":rows,"failures":failures[:100]
     }
