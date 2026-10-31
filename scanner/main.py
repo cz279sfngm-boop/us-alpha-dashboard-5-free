@@ -368,7 +368,7 @@ def calibrate(rows:list[dict])->None:
         r["pool"]=",".join(tags)
         r["status"]="READY" if r["sScore"]>=84 and r["price"]>r["ema20"] else "WATCH" if r["sScore"]>=72 else "EXTENDED" if r["sScore"]>=64 else "FAILED"
 
-def seed_universe(eligible:list[dict],limit=360)->list[dict]:
+def seed_universe(eligible:list[dict],limit=120)->list[dict]:
     liquid=[x for x in eligible if x["dailyDollarVolume"]>=5_000_000 and x["marketCap"]>=300_000_000]
     m={}
     for x in sorted(liquid,key=lambda z:(z["changePct"]*2+math.log10(max(1,z["dailyDollarVolume"]))),reverse=True)[:140]:m[x["symbol"]]=x
@@ -401,7 +401,7 @@ def scan(mode:str,output:Path,force=False)->None:
     try:cikmap=sec_ticker_map()
     except Exception:pass
     ranked=sorted(results,key=lambda x:(x[1]["rs20"]+x[1]["rvol"]*4+x[0]["changePct"]),reverse=True)
-    target={x[0]["symbol"] for x in ranked[:55]}
+    target={x[0]["symbol"] for x in ranked[:45]}
     fundmap={}
     with cf.ThreadPoolExecutor(max_workers=5) as ex:
         futs={ex.submit(sec_fundamentals,s,cikmap):s for s in target}
