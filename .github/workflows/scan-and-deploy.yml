@@ -64,6 +64,9 @@ jobs:
       - name: Run research scan
         env:
           ALPHA_WORKERS: '10'
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: 'gemini-3.6-flash'
+          AI_RESEARCH_LIMIT: '12'
         run: |
           MODE="${{ github.event.inputs.mode }}"
           if [ -z "$MODE" ]; then MODE="push-or-scheduled-${{ github.event.schedule }}"; fi
