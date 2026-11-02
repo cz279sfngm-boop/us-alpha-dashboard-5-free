@@ -1,37 +1,112 @@
-# US Multi-Horizon Alpha Dashboard 5.0 — Free Runtime Edition
+# US Multi-Horizon Alpha Dashboard 5.1 — Free Research Runtime
 
-免費運行架構：
+Production dashboard:
 
-- GitHub Pages：靜態 Dashboard，掃描失敗時網站仍可開啟
-- GitHub Actions：美股掃描、WT/MF、S/M/G、Sector/Theme 及自動部署
-- GitHub Actions cache：Yahoo Daily OHLCV 快取
-- Nasdaq public screener：Universe + Sector / Industry
-- Yahoo Finance public chart：1Y bootstrap + 10D incremental
-- SEC Company Facts：年度基本面
+https://cz279sfngm-boop.github.io/us-alpha-dashboard-5-free/
 
-## 主要功能
+## Free architecture
 
-- S / M / G 獨立評分
-- SM / MG / SMG 共振
-- Research Watchlist 最多 50 隻
+- **GitHub Pages** — static dashboard; a scan failure does not take the site runtime down.
+- **GitHub Actions** — scheduled scanning, technical calculation, evidence gathering and deployment.
+- **GitHub Actions cache** — historical OHLCV and optional AI report cache.
+- **Nasdaq public screener** — US universe, price/volume, Sector and Industry.
+- **Nasdaq Public Historical** — primary daily OHLCV on GitHub runners; raw/unadjusted.
+- **Yahoo chart** — fallback only; GitHub-hosted runners may receive 429.
+- **Nasdaq Earnings Forecast** — Consensus EPS plus analyst Up/Down revisions over the last four weeks.
+- **Nasdaq News Headlines** — symbol-linked headline evidence.
+- **Nasdaq / Quotemedia SEC Filings** — runtime regulatory filing evidence; direct SEC endpoints are blocked with 403 on GitHub-hosted Azure runners.
+- **SEC Company Facts** — attempted only where runtime access is available.
+
+## Research governance
+
+The system distinguishes evidence from synthesis.
+
+### Analyst revision
+
+The revision factor uses the Nasdaq Earnings Forecast fields:
+
+- Consensus EPS Forecast
+- Number of Estimates
+- Number of Revisions Up over the last 4 weeks
+- Number of Revisions Down over the last 4 weeks
+
+The dashboard computes a directional **Revision Breadth** from Up/Down counts. It does **not** claim this is the percentage change in consensus EPS.
+
+### News
+
+News is evidence only. The existence of a headline does not automatically create a bullish score.
+
+### Regulatory filings
+
+Recent 8-K / 10-Q / 10-K / 6-K / 20-F filings are surfaced separately. They are high-quality event evidence but are not automatically classified as positive or negative.
+
+### AI Alpha Research
+
+Every candidate receives a deterministic evidence-grounded research note.
+
+If the repository secret `GEMINI_API_KEY` is configured, the top candidates can also receive Gemini synthesis. The model prompt explicitly prohibits using model-memory company facts and requires unsupported sections to say **資料不足**.
+
+The API key is never written into the repository or GitHub Pages.
+
+## Optional Gemini setup
+
+Repository secret name:
+
+`GEMINI_API_KEY`
+
+Optional scanner environment:
+
+- `GEMINI_MODEL=gemini-3.6-flash`
+- `AI_RESEARCH_LIMIT=12`
+
+Without this secret the scanner continues to work and uses deterministic evidence synthesis.
+
+## True on-demand AI
+
+The repository contains:
+
+`supabase/functions/alpha-research/`
+
+This is a secure Edge Function scaffold for click-to-generate AI research. It is designed for:
+
+- Supabase JWT verification
+- server-side Gemini secret
+- allowed-origin restriction
+- an evidence-field allowlist
+- no model-memory company facts
+
+The GitHub Pages frontend should never call Gemini directly with a browser-exposed secret.
+
+## Core functions
+
+- S / M / G independent scores
+- SM / MG / SMG resonance pools
+- Research Watchlist up to 50 names
 - WaveTrend 9/12/3
-- Market Cipher MF 5/5/60 + Price Pivot 5/5 divergence
+- Market Cipher MF 5/5/60 + confirmed price-pivot divergence
 - Indicator Composite = 55% WT + 45% MF
-- Sector / Industry / Theme
+- Sector / Industry / Theme discovery across the eligible universe
 - Interactive Screener
-- 自訂排序與 CSV
+- Revision Score / Catalyst Evidence filters
+- Evidence detail: analyst revisions, Nasdaq news, regulatory filings
+- AI Alpha Research / deterministic fallback
+- custom sorting and CSV
 - Universe / Deep Processed / Failures / True Coverage
 
-## 數據原則
+## Scan schedule
 
-不會把未取得的 analyst revision、新聞、估值或財務值填成假數字。Deep Scan 亦不會冒充全市場 OHLCV 覆蓋。
+America/New_York:
 
-## 排程
+- 08:30 weekdays
+- 10:00 weekdays
+- 16:45 weekdays
+- 11:00 Saturday
 
-America/New_York：
-- 08:30 交易日
-- 10:00 交易日
-- 16:45 交易日
-- 11:00 星期六
+## Important limitations
 
-Daily WT/MF 以 1D Yahoo bars 計算。
+- Scores are ranking tools, not win probabilities.
+- Nasdaq historical fallback is raw/unadjusted OHLCV.
+- Direct SEC data access may be unavailable from GitHub-hosted runners.
+- Free public endpoints can change or rate-limit.
+- Theme tags are deterministic research labels, not official exchange classifications.
+- No missing financial, analyst, news or valuation field is silently fabricated.
