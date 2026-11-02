@@ -61,6 +61,11 @@ jobs:
       - name: Install scanner dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate source syntax
+        run: |
+          python -m py_compile scanner/main.py scanner/research.py
+          node --check site/app.js
+
       - name: Run research scan
         env:
           ALPHA_WORKERS: '10'
