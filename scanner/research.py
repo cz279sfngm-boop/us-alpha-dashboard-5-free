@@ -165,50 +165,147 @@ def fetch_nasdaq_news(symbol: str, limit: int = 6) -> dict:
         return {**out, "newsError": str(exc)[:180]}
 
 def fetch_sec_filings(symbol: str, cik: str | None, limit: int = 6) -> dict:
+    """Regulatory filing evidence.
+
+    GitHub-hosted Azure runners currently receive HTTP 403 from SEC data endpoints.
+    Nasdaq's public company filings endpoint is therefore the runtime primary source.
+    Nasdaq's filing links resolve to Quotemedia-hosted copies of SEC filings.
+    """
     out = {
-        "filingSource": "SEC Submissions",
+        "filingSource": "Nasdaq SEC Filings (Quotemedia)",
         "filingConfidence": "低",
         "recentFilings": [],
         "filingsFetchedAt": None,
+        "secDirectAccess": "blocked_on_github_runner",
     }
-    if not cik:
-        return out
+
+    accepted = {"8-K", "10-Q", "10-K", "6-K", "20-F"}
+
     try:
-        j = _get_json(f"https://data.sec.gov/submissions/CIK{cik}.json", sec=True, retries=2)
-        recent = ((j.get("filings") or {}).get("recent") or {})
-        forms = recent.get("form") or []
-        dates = recent.get("filingDate") or []
-        accessions = recent.get("accessionNumber") or []
-        docs = recent.get("primaryDocument") or []
-        accepted = {"8-K", "10-Q", "10-K", "6-K", "20-F"}
+        j = _get_json(
+            f"https://api.nasdaq.com/api/company/{quote(symbol)}/sec-filings?limit=50&sortColumn=filed&sortOrder=desc",
+            retries=3,
+            timeout=30,
+        )
+        data = j.get("data") or {}
+        rows = data.get("rows") or []
         items = []
-        for i, form in enumerate(forms):
+        seen = set()
+
+        for row in rows:
+            form = str(row.get("formType") or "").strip()
             if form not in accepted:
                 continue
-            try:
-                acc = str(accessions[i])
-                doc = str(docs[i])
-                date = str(dates[i])
-            except Exception:
+
+            filed = str(row.get("filed") or "").strip()
+            period = str(row.get("period") or "").strip()
+            view = row.get("view") or {}
+            url = (
+                view.get("htmlLink")
+                or view.get("pdfLink")
+                or view.get("docLink")
+                or ""
+            )
+            key = (form, filed, url)
+            if key in seen:
                 continue
-            acc_clean = acc.replace("-", "")
-            sec_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc}"
+            seen.add(key)
+
             items.append({
                 "form": form,
-                "filingDate": date,
-                "accessionNumber": acc,
-                "url": sec_url,
+                "filingDate": filed,
+                "period": period,
+                "companyName": row.get("companyName"),
+                "url": url,
+                "provider": "Nasdaq / Quotemedia",
             })
             if len(items) >= limit:
                 break
-        return {
-            **out,
-            "filingConfidence": "高" if items else "低",
-            "recentFilings": items,
-            "filingsFetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-        }
-    except Exception as exc:
-        return {**out, "filingError": str(exc)[:180]}
+
+        # The API also exposes latest 10-K/10-Q links. Use them when rows happen
+        # not to include a filing type in the returned window.
+        if len(items) < limit:
+            for x in data.get("latest") or []:
+                form = str(x.get("label") or "").strip()
+                url = str(x.get("value") or "")
+                if form not in accepted or not url:
+                    continue
+                key = (form, "", url)
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append({
+                    "form": form,
+                    "filingDate": None,
+                    "period": None,
+                    "companyName": None,
+                    "url": url,
+                    "provider": "Nasdaq / Quotemedia",
+                })
+                if len(items) >= limit:
+                    break
+
+        if items:
+            return {
+                **out,
+                "filingConfidence": "高",
+                "recentFilings": items,
+                "filingsFetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+    except Exception as nasdaq_exc:
+        out["filingError"] = "Nasdaq filings: " + str(nasdaq_exc)[:150]
+
+    # Direct SEC access is retained as a standards-compliant fallback for
+    # environments that are not blocked by SEC.
+    if cik:
+        try:
+            j = _get_json(
+                f"https://data.sec.gov/submissions/CIK{cik}.json",
+                sec=True,
+                retries=2,
+                timeout=20,
+            )
+            recent = ((j.get("filings") or {}).get("recent") or {})
+            forms = recent.get("form") or []
+            dates = recent.get("filingDate") or []
+            accessions = recent.get("accessionNumber") or []
+            docs = recent.get("primaryDocument") or []
+            items = []
+            for i, form in enumerate(forms):
+                if form not in accepted:
+                    continue
+                try:
+                    acc = str(accessions[i])
+                    doc = str(docs[i])
+                    date = str(dates[i])
+                except Exception:
+                    continue
+                acc_clean = acc.replace("-", "")
+                sec_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc}"
+                items.append({
+                    "form": form,
+                    "filingDate": date,
+                    "period": None,
+                    "companyName": None,
+                    "url": sec_url,
+                    "provider": "SEC EDGAR",
+                })
+                if len(items) >= limit:
+                    break
+
+            if items:
+                return {
+                    **out,
+                    "filingSource": "SEC EDGAR",
+                    "filingConfidence": "高",
+                    "recentFilings": items,
+                    "filingsFetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "secDirectAccess": "available",
+                }
+        except Exception as sec_exc:
+            out["secFallbackError"] = str(sec_exc)[:150]
+
+    return out
 
 def fetch_research_evidence(symbol: str, cik: str | None) -> dict:
     revision = fetch_nasdaq_revision(symbol)
@@ -250,7 +347,7 @@ def deterministic_report(c: dict) -> str:
     ) or "- 資料不足"
 
     filing_lines = "\n".join(
-        f"- [FIL-{i+1}] {x.get('filingDate') or '日期不足'}｜SEC {x.get('form') or 'Form 資料不足'}"
+        f"- [FIL-{i+1}] {x.get('filingDate') or '日期不足'}｜{x.get('provider') or 'Regulatory Filing'}｜{x.get('form') or 'Form 資料不足'}"
         for i, x in enumerate(filings[:5])
     ) or "- 資料不足"
 
