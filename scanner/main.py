@@ -14,6 +14,8 @@ from typing import Any, Iterable
 
 import requests
 
+from research import attach_research_reports, fetch_research_evidence
+
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / ".cache"
 HIST = CACHE / "ohlcv"
@@ -379,8 +381,8 @@ def sec_fundamentals(symbol:str,cikmap:dict[str,str])->dict:
     filed=max([x[-1].get("filed","") for x in (rev,eps,ni,op) if x],default=None)
     return {"fundamentalConfidence":"高" if cnt>=5 else "中" if cnt>=3 else "低","revenueGrowth":gr(rev),"epsGrowth":gr(eps),"fcfMargin":fcfm,"roe":roe,"roic":roic,"operatingMargin":opm,"grossMargin":gpm,"netMargin":nm,"cash":cash,"debt":debt,"latestFiled":filed}
 
-def score_candidate(stock:dict,t:dict,f:dict)->dict:
-    rev=None; catalyst=None; valuation=None
+def score_candidate(stock:dict,t:dict,f:dict,research:dict)->dict:
+    rev=research.get("revisionScore"); catalyst=research.get("catalystScore"); valuation=None
     alpha=None if f["fundamentalConfidence"]=="低" else clamp(45+max(-12,min(18,(f["revenueGrowth"] or 0)*0.5))+max(-8,min(10,(f["fcfMargin"] or 0)*0.35)))
     tech_s=clamp(43+(10 if stock["price"]>t["ema20"] else 0)+(9 if t["ema20"]>t["ema50"] else 0)+(6 if t["ema50"]>t["ema200"] else 0)+(8 if t["breakout"] else 0)+(5 if t["vcp"] else 0)+max(-16,min(16,t["rs20"]*1.1))+max(-8,min(12,(t["rvol"]-1)*8)))
     tech_m=clamp(44+max(-10,min(12,t["return1m"]*0.4))+max(-10,min(14,t["return3m"]*0.25))+max(-8,min(10,t["return6m"]*0.12))+(8 if stock["price"]>t["ema50"] else 0)+(7 if t["ema50"]>t["ema200"] else 0))
@@ -398,7 +400,9 @@ def score_candidate(stock:dict,t:dict,f:dict)->dict:
     if f["fundamentalConfidence"]=="低":g=min(g,59);m=min(m,64)
     if t["avgDollarTurnover20"]<10_000_000 or stock["marketCap"]<500_000_000 or stock["price"]<5:s=min(s,69)
     if t["avgDollarTurnover20"]<3_000_000 or stock["marketCap"]<300_000_000:g=min(g,69)
-    return {**stock,**t,**f,"rawSScore":s,"rawMScore":m,"rawGScore":g,"sScore":s,"mScore":m,"gScore":g,"riskScore":risk,"trueAlphaScore":alpha or 0,"momentumScore":clamp(38+max(-15,min(20,t["rs20"]*1.15))+max(-9,min(17,(t["rvol"]-1)*10))+max(-7,min(8,t["return1m"]*0.25))),"hypeScore":0,"valuationAttractiveness":None,"revisionConfidence":"低","catalystConfidence":"低","epsRevision30d":None,"revenueRevision30d":None,"forwardPE":None,"pool":"","status":"FAILED","dataConfidence":"中" if f["fundamentalConfidence"]!="低" else "低","classificationSource":"Nasdaq sector/industry + deterministic theme rules"}
+    evidence_count=sum([f["fundamentalConfidence"]!="低",research.get("revisionConfidence")!="低",research.get("catalystConfidence")!="低"])
+    data_conf="高" if evidence_count>=3 else "中" if evidence_count>=1 else "低"
+    return {**stock,**t,**f,**research,"rawSScore":s,"rawMScore":m,"rawGScore":g,"sScore":s,"mScore":m,"gScore":g,"riskScore":risk,"trueAlphaScore":alpha or 0,"momentumScore":clamp(38+max(-15,min(20,t["rs20"]*1.15))+max(-9,min(17,(t["rvol"]-1)*10))+max(-7,min(8,t["return1m"]*0.25))),"hypeScore":0,"valuationAttractiveness":None,"epsRevision30d":None,"revenueRevision30d":None,"forwardPE":None,"pool":"","status":"FAILED","dataConfidence":data_conf,"classificationSource":"Nasdaq sector/industry + deterministic theme rules"}
 
 def calibrate(rows:list[dict])->None:
     sv=[r["rawSScore"] for r in rows]; mv=[r["rawMScore"] for r in rows]; gv=[r["rawGScore"] for r in rows]
@@ -414,9 +418,10 @@ def calibrate(rows:list[dict])->None:
         if r["gScore"]>=70 and r["fundamentalConfidence"]!="低":tags.append("G")
         if "S" in tags and "M" in tags:tags.append("SM")
         if "M" in tags and "G" in tags:tags.append("MG")
-        if r["sScore"]>=78 and r["mScore"]>=76 and r["gScore"]>=75 and r["fundamentalConfidence"]!="低":tags.append("SMG")
+        if r["sScore"]>=78 and r["mScore"]>=76 and r["gScore"]>=75 and r["fundamentalConfidence"]!="低" and (r.get("revisionConfidence")!="低" or r.get("catalystConfidence")!="低"):tags.append("SMG")
         r["pool"]=",".join(tags)
-        r["status"]="READY" if r["sScore"]>=84 and r["price"]>r["ema20"] else "WATCH" if r["sScore"]>=72 else "EXTENDED" if r["sScore"]>=64 else "FAILED"
+        evidence_ok=(r.get("revisionConfidence")!="低" or r.get("catalystConfidence")!="低")
+        r["status"]="READY" if r["sScore"]>=84 and r["price"]>r["ema20"] and evidence_ok else "WATCH" if r["sScore"]>=72 else "EXTENDED" if r["sScore"]>=64 else "FAILED"
 
 def seed_universe(eligible:list[dict],limit=120)->list[dict]:
     liquid=[x for x in eligible if x["dailyDollarVolume"]>=5_000_000 and x["marketCap"]>=300_000_000]
@@ -463,10 +468,22 @@ def scan(mode:str,output:Path,force=False)->None:
             sym=futs[fut]
             try:fundmap[sym]=fut.result()
             except Exception:pass
+
+    researchmap={}
+    with cf.ThreadPoolExecutor(max_workers=6) as ex:
+        futs={ex.submit(fetch_research_evidence,s,cikmap.get(s)):s for s in target}
+        for fut in cf.as_completed(futs):
+            sym=futs[fut]
+            try:researchmap[sym]=fut.result()
+            except Exception as exc:
+                researchmap[sym]={"revisionConfidence":"低","revisionScore":None,"catalystConfidence":"低","catalystScore":None,"news":[],"recentFilings":[],"researchError":str(exc)[:180]}
+
     empty={"fundamentalConfidence":"低","revenueGrowth":None,"epsGrowth":None,"fcfMargin":None,"roe":None,"roic":None,"operatingMargin":None,"grossMargin":None,"netMargin":None,"cash":None,"debt":None,"latestFiled":None}
-    rows=[score_candidate(stock,t,fundmap.get(stock["symbol"],empty)) for stock,t in results]
+    empty_research={"revisionConfidence":"低","revisionScore":None,"revisionUp4w":0,"revisionDown4w":0,"revisionBreadth4wPct":None,"nextQuarterForecast":None,"nextYearForecast":None,"catalystConfidence":"低","catalystScore":None,"news":[],"recentFilings":[]}
+    rows=[score_candidate(stock,t,fundmap.get(stock["symbol"],empty),researchmap.get(stock["symbol"],empty_research)) for stock,t in results]
     calibrate(rows); rows=sorted(rows,key=lambda r:r["dScore"],reverse=True)[:50]
     for i,r in enumerate(rows):r["priority"]="A" if i<10 else "B" if i<25 else "C"
+    ai_status=attach_research_reports(rows)
     sectors={}; industries={}; themes={}
     for x in eligible:
         sectors[x["sector"]]=sectors.get(x["sector"],0)+1
@@ -475,9 +492,10 @@ def scan(mode:str,output:Path,force=False)->None:
     payload={
         "version":"5.0-free","generatedAt":dt.datetime.now(dt.timezone.utc).isoformat(),"mode":mode,
         "universeStats":{**stats,"stage1Eligible":len([x for x in eligible if x["dailyDollarVolume"]>=5_000_000 and x["marketCap"]>=300_000_000]),"deepAttempted":len(seeds),"successfullyProcessed":len(results),"scanFailures":len(failures),"coveragePct":len(results)/len(eligible)*100 if eligible else 0,"latestUniverseRefresh":started.isoformat()},
-        "dataGovernance":{"deepScanScope":"Multi-path candidate deep scan, not full OHLCV coverage","marketSource":"Nasdaq public screener + Nasdaq Public Historical OHLCV; Yahoo chart is fallback only","fundamentalSource":"SEC Company Facts","historyCache":"GitHub Actions cache (.cache/ohlcv), 1Y bootstrap + 10D incremental refresh","limitations":["Nasdaq public historical bars are treated as raw/unadjusted OHLCV when Yahoo adjusted data is unavailable","No licensed analyst-consensus feed","No licensed news feed in free mode","Theme tags are deterministic research labels, not official exchange sectors"]},
+        "dataGovernance":{"deepScanScope":"Multi-path candidate deep scan, not full OHLCV coverage","marketSource":"Nasdaq public screener + Nasdaq Public Historical OHLCV; Yahoo chart is fallback only","fundamentalSource":"SEC Company Facts","revisionSource":"Nasdaq Earnings Forecast: consensus EPS + 4-week Up/Down revisions","newsSource":"Nasdaq News Headlines; SEC filings are separate regulatory catalysts","historyCache":"GitHub Actions cache (.cache/ohlcv), 1Y bootstrap + 10D incremental refresh","limitations":["Nasdaq public historical bars are treated as raw/unadjusted OHLCV when Yahoo adjusted data is unavailable","Revision Breadth is computed from Up/Down counts and is not EPS consensus percent change","News presence is not treated as bullish by itself","Theme tags are deterministic research labels, not official exchange sectors"]},
         "catalog":{"sectors":sorted([{"name":k,"count":v} for k,v in sectors.items() if k],key=lambda x:(-x["count"],x["name"])),"industries":sorted([{"name":k,"count":v} for k,v in industries.items() if k],key=lambda x:(-x["count"],x["name"])),"themes":sorted([{"name":k,"count":v} for k,v in themes.items()],key=lambda x:(-x["count"],x["name"]))},
         "universeLite":[{"symbol":x["symbol"],"name":x["name"],"sector":x["sector"],"industry":x["industry"],"themes":x["themes"],"price":x["price"],"changePct":x["changePct"],"volume":x["volume"],"marketCap":x["marketCap"],"dailyDollarVolume":x["dailyDollarVolume"]} for x in eligible],
+        "aiResearchStatus":ai_status,
         "candidates":rows,"failures":failures[:100]
     }
     output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps(payload,ensure_ascii=False,indent=2))
