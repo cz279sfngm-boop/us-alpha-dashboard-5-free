@@ -153,6 +153,8 @@ function apply() {
   const minWT = getVal("minWT");
   const minMF = getVal("minMF");
   const minInd = getVal("minInd");
+  const minRevision = getVal("minRevision");
+  const requireCatalyst = $("requireCatalyst").value;
 
   filtered = (DB.candidates || []).filter((c) => {
     const tags = String(c.pool || "").split(",");
@@ -171,6 +173,8 @@ function apply() {
     if (minWT !== null && c.waveTrendScore < minWT) return false;
     if (minMF !== null && c.mfScore < minMF) return false;
     if (minInd !== null && c.indicatorScore < minInd) return false;
+    if (minRevision !== null && (c.revisionScore === null || c.revisionScore < minRevision)) return false;
+    if (requireCatalyst === "yes" && c.catalystConfidence === "低") return false;
     return true;
   });
 
@@ -204,6 +208,7 @@ function renderTable() {
         '<td class="score">' + c.waveTrendScore + "</td>" +
         '<td class="score">' + c.mfScore + "</td>" +
         '<td class="score">' + c.indicatorScore + "</td>" +
+        "<td>" + (c.revisionScore == null ? "資料不足" : c.revisionScore + " · " + (c.revisionUp4w || 0) + "↑/" + (c.revisionDown4w || 0) + "↓") + "</td>" +
         "<td>" + pct(c.revenueGrowth) + "</td>" +
         "<td>" + pct(c.roic) + "</td>" +
         "<td><div>" + esc(c.sector || "Unclassified") + '</div><div class="classify">' + esc(c.industry || "") + "</div></td>" +
@@ -211,7 +216,7 @@ function renderTable() {
         '<td><span class="pill ' + esc(c.status) + '">' + esc(c.status) + "</span></td>" +
         "</tr>"
       ).join("")
-    : '<tr><td colspan="16" class="empty">目前條件沒有匹配股票。這只代表 Research Watchlist 篩選結果為0，不代表沒有市場資料。</td></tr>';
+    : '<tr><td colspan="17" class="empty">目前條件沒有匹配股票。這只代表 Research Watchlist 篩選結果為0，不代表沒有市場資料。</td></tr>';
 
   document.querySelectorAll("#tbody tr[data-sym]").forEach((tr) => {
     tr.onclick = () => detail(tr.dataset.sym);
@@ -241,6 +246,11 @@ function detail(sym) {
     ["MF Value", num(c.mfValue)],
     ["MF Divergence", c.mfDivergence + (c.mfDivBarsAgo == null ? "" : " · " + c.mfDivBarsAgo + " bars")],
     ["Indicator", c.indicatorScore],
+    ["Revision Score", c.revisionScore == null ? "資料不足" : c.revisionScore],
+    ["Revision Up / Down 4W", (c.revisionUp4w || 0) + " / " + (c.revisionDown4w || 0)],
+    ["Revision Breadth 4W", pct(c.revisionBreadth4wPct)],
+    ["Revision Confidence", c.revisionConfidence || "低"],
+    ["Catalyst Confidence", c.catalystConfidence || "低"],
     ["Revenue Growth", pct(c.revenueGrowth)],
     ["EPS Growth", pct(c.epsGrowth)],
     ["Operating Margin", pct(c.operatingMargin)],
@@ -255,11 +265,45 @@ function detail(sym) {
     "<div><span>" + esc(x[0]) + "</span><b>" + esc(x[1]) + "</b></div>"
   ).join("");
 
+  const q = c.nextQuarterForecast || {};
+  const y = c.nextYearForecast || {};
+  const revisionItems = [
+    ["Next Quarter EPS", q.consensusEPS == null ? "資料不足" : num(q.consensusEPS, 2)],
+    ["Quarter Estimates", q.estimates == null ? "資料不足" : q.estimates],
+    ["Quarter Up / Down", (q.up4w || 0) + " / " + (q.down4w || 0)],
+    ["Next FY EPS", y.consensusEPS == null ? "資料不足" : num(y.consensusEPS, 2)],
+    ["FY Estimates", y.estimates == null ? "資料不足" : y.estimates],
+    ["FY Up / Down", (y.up4w || 0) + " / " + (y.down4w || 0)]
+  ];
+  $("revisionGrid").innerHTML = revisionItems.map((x) =>
+    "<div><span>" + esc(x[0]) + "</span><b>" + esc(x[1]) + "</b></div>"
+  ).join("");
+
+  const news = c.news || [];
+  $("newsList").innerHTML = news.length ? news.map((x, i) =>
+    '<a class="evidenceItem" href="' + esc(x.url || "#") + '" target="_blank" rel="noopener noreferrer">' +
+    '<b>[NEWS-' + (i + 1) + "] " + esc(x.title || "Untitled") + "</b>" +
+    "<span>" + esc((x.publisher || "來源不足") + " · " + (x.created || x.ago || "日期不足")) + "</span></a>"
+  ).join("") : '<div class="evidenceEmpty">資料不足</div>';
+
+  const filings = c.recentFilings || [];
+  $("filingList").innerHTML = filings.length ? filings.map((x, i) =>
+    '<a class="evidenceItem" href="' + esc(x.url || "#") + '" target="_blank" rel="noopener noreferrer">' +
+    '<b>[FIL-' + (i + 1) + "] SEC " + esc(x.form || "Form") + "</b>" +
+    "<span>" + esc(x.filingDate || "日期不足") + "</span></a>"
+  ).join("") : '<div class="evidenceEmpty">資料不足</div>';
+
+  $("researchEvidenceMeta").textContent =
+    "Revision: " + (c.revisionSource || "資料不足") + " · News: " + (c.newsSource || "資料不足") +
+    " · Filing: " + (c.filingSource || "資料不足");
+  $("aiModeChip").textContent = c.aiResearchMode || "Evidence synthesis";
+  $("aiResearch").textContent = c.aiResearch || c.evidenceResearch || "資料不足";
+
   $("detailPanel").scrollIntoView({ behavior: "smooth" });
 }
 
 function readFilters() {
-  const ids = ["sector","industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","sortKey","sortDir"];
+  const ids = ["sector","industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","minRevision","requireCatalyst","sortKey","sortDir"];
   return Object.fromEntries(ids.map((id) => [id, $(id).value]));
 }
 
@@ -281,7 +325,8 @@ function restoreFilters() {
 function resetFilters() {
   ["sector","industry","theme"].forEach((id) => $(id).value = "");
   $("horizon").value = "ALL";
-  ["minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd"].forEach((id) => $(id).value = "");
+  ["minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","minRevision"].forEach((id) => $(id).value = "");
+  $("requireCatalyst").value = "";
   activeTab = "ALL";
   updateIndustryOptions();
   renderTabs();
@@ -290,7 +335,7 @@ function resetFilters() {
 
 function exportCsv() {
   if (!filtered.length) return;
-  const cols = ["symbol","name","price","sScore","mScore","gScore","dScore","rvol","rs20","waveTrendScore","mfScore","indicatorScore","revenueGrowth","roic","sector","industry","pool","status"];
+  const cols = ["symbol","name","price","sScore","mScore","gScore","dScore","rvol","rs20","waveTrendScore","mfScore","indicatorScore","revisionScore","revisionUp4w","revisionDown4w","revisionBreadth4wPct","revenueGrowth","roic","sector","industry","pool","status"];
   const lines = [
     cols.join(","),
     ...filtered.map((c) => cols.map((k) => '"' + String(c[k] ?? "").replace(/"/g, '""') + '"').join(","))
@@ -308,7 +353,7 @@ function bindEvents() {
     apply();
   });
 
-  ["industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","sortKey","sortDir"].forEach((id) => {
+  ["industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","minRevision","requireCatalyst","sortKey","sortDir"].forEach((id) => {
     $(id).addEventListener("input", apply);
   });
 
@@ -331,11 +376,16 @@ function renderAll() {
   ].join("");
 
   const g = DB.dataGovernance || {};
+  const ai = DB.aiResearchStatus || {};
   $("governance").innerHTML =
     "<div><b>Deep Scan Scope</b><p>" + esc(g.deepScanScope || "—") + "</p></div>" +
     "<div><b>Market Source</b><p>" + esc(g.marketSource || "—") + "</p></div>" +
+    "<div><b>Analyst Revision</b><p>" + esc(g.revisionSource || "資料不足") + "</p></div>" +
+    "<div><b>News / Catalyst</b><p>" + esc((g.newsSource || "資料不足") + " · SEC filings") + "</p></div>" +
     "<div><b>Fundamental Source</b><p>" + esc(g.fundamentalSource || "—") + "</p></div>" +
-    "<div><b>History Cache</b><p>" + esc(g.historyCache || "—") + "</p></div>";
+    "<div><b>AI Alpha Research</b><p>" + esc((ai.provider || "No AI secret configured") + (ai.model ? " · " + ai.model : "") + " · fallback: " + (ai.fallback || "evidence synthesis")) + "</p></div>" +
+    "<div><b>History Cache</b><p>" + esc(g.historyCache || "—") + "</p></div>" +
+    "<div><b>Research Guardrail</b><p>AI 只可使用本次 Market / SEC / Nasdaq evidence；缺資料必須標示資料不足。</p></div>";
 
   fillSelect("sector", DB.catalog?.sectors || []);
   fillSelect("theme", DB.catalog?.themes || []);
