@@ -117,7 +117,10 @@ ${JSON.stringify(evidence)}`;
       },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.15, maxOutputTokens: 1600 },
+        generationConfig: {
+          maxOutputTokens: 3200,
+          thinkingConfig: { thinkingLevel: "minimal" },
+        },
       }),
     });
 
