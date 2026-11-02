@@ -14,6 +14,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 AI_CACHE = ROOT / ".cache" / "ai_research"
 AI_CACHE.mkdir(parents=True, exist_ok=True)
+AI_PROMPT_VERSION = "2026-11-02-v2"
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/141 Safari/537.36",
@@ -408,7 +409,10 @@ def _evidence_payload(c: dict) -> dict:
     return {k: c.get(k) for k in keep}
 
 def _fingerprint(c: dict) -> str:
-    raw = json.dumps(_evidence_payload(c), sort_keys=True, ensure_ascii=False, default=str)
+    raw = json.dumps({
+        "promptVersion": AI_PROMPT_VERSION,
+        "evidence": _evidence_payload(c),
+    }, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 def _cache_path(symbol: str) -> Path:
@@ -441,7 +445,12 @@ def _save_ai_cache(c: dict, report: str, model: str) -> None:
 def gemini_report(c: dict, api_key: str, model: str = "gemini-3.6-flash") -> str:
     evidence = json.dumps(_evidence_payload(c), ensure_ascii=False, separators=(",", ":"), default=str)
     prompt = f"""你是機構級美股研究助理。請只使用下方 EVIDENCE JSON，禁止使用模型記憶補充公司事實。
-如某一項沒有證據，必須寫「資料不足」。不要把新聞標題當成已證實事實；不要把新聞存在本身視為利多。
+如某一項沒有證據，必須寫「資料不足」。
+嚴格證據規則：
+- [NEWS-n] 只有標題/摘要層級證據。任何由 NEWS 得出的敘述都必須寫成「Nasdaq 收錄的 <publisher> 報導/摘要稱……」，不得改寫成已獨立證實的公司事實。
+- [FIL-n] 只證明該 filing 的 Form、日期、期間與連結存在；除非 EVIDENCE 另有 filing 內容，禁止推測文件內容。
+- [REV] 只證明共識 EPS、估計數量及過去4週 Up/Down revisions，不代表實際業績。
+- 不得因為「有新聞」或「有 filing」本身就判斷利多或利空。
 所有結論都要用以下來源標籤：Market=[MKT]、SEC fundamentals=[SEC]、Nasdaq analyst revisions=[REV]、news=[NEWS-n]、filings=[FIL-n]。
 輸出繁體中文 Markdown，依次包含：
 1. 執行摘要
@@ -498,6 +507,35 @@ EVIDENCE JSON:
             last_error = exc
             if attempt < 3:
                 time.sleep(2.0 * (attempt + 1))
+
+    fallback_model = "gemini-3.5-flash-lite"
+    if model != fallback_model:
+        fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/{quote(fallback_model)}:generateContent"
+        for attempt in range(2):
+            try:
+                r = requests.post(
+                    fallback_url,
+                    headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                    json=body,
+                    timeout=75,
+                )
+                if r.status_code in (429, 500, 502, 503, 504):
+                    time.sleep(2.0 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                j = r.json()
+                parts = (((j.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+                answer = "\n".join(
+                    str(x.get("text") or "")
+                    for x in parts
+                    if not x.get("thought")
+                ).strip()
+                if answer:
+                    return answer
+            except Exception as exc:
+                last_error = exc
+                if attempt < 1:
+                    time.sleep(2.0)
 
     raise RuntimeError(str(last_error) if last_error else "Gemini request failed")
 
