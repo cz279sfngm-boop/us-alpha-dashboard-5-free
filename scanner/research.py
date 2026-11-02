@@ -463,23 +463,43 @@ EVIDENCE JSON:
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.15,
-            "maxOutputTokens": 1400,
+            "maxOutputTokens": 3200,
+            "thinkingConfig": {
+                "thinkingLevel": "minimal"
+            },
         },
     }
-    r = requests.post(
-        url,
-        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-        json=body,
-        timeout=60,
-    )
-    r.raise_for_status()
-    j = r.json()
-    parts = (((j.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-    text = "\n".join(str(x.get("text") or "") for x in parts).strip()
-    if not text:
-        raise RuntimeError("Gemini returned empty text")
-    return text
+
+    last_error = None
+    for attempt in range(4):
+        try:
+            r = requests.post(
+                url,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json=body,
+                timeout=75,
+            )
+            if r.status_code in (429, 500, 502, 503, 504):
+                last_error = RuntimeError(f"Gemini transient HTTP {r.status_code}")
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            j = r.json()
+            parts = (((j.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+            answer = "\n".join(
+                str(x.get("text") or "")
+                for x in parts
+                if not x.get("thought")
+            ).strip()
+            if not answer:
+                raise RuntimeError("Gemini returned empty text")
+            return answer
+        except Exception as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(2.0 * (attempt + 1))
+
+    raise RuntimeError(str(last_error) if last_error else "Gemini request failed")
 
 def attach_research_reports(rows: list[dict]) -> dict:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
