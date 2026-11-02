@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#06111a" />
-  <title>US Multi-Horizon Alpha Dashboard 5.0 Free</title>
+  <title>US Multi-Horizon Alpha Dashboard 5.1 Free</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <main class="shell">
     <header class="hero">
       <div>
-        <div class="eyebrow">US MULTI-HORIZON ALPHA DASHBOARD 5.0 · FREE RUNTIME</div>
+        <div class="eyebrow">US MULTI-HORIZON ALPHA DASHBOARD 5.1 · FREE RUNTIME</div>
         <h1>Full-Market Alpha Discovery <span>GitHub Edition</span></h1>
-        <p>Nasdaq Universe → Yahoo Daily Cache → WT/MF → S/M/G → Sector/Theme → Research Watchlist</p>
+        <p>Nasdaq Universe → Historical OHLCV → Analyst Revision / News / SEC → WT/MF → S/M/G → Evidence-grounded Research</p>
       </div>
       <div class="heroBadge">No paid runtime</div>
     </header>
@@ -69,6 +69,8 @@
         <label>Min WT Score<input id="minWT" type="number" min="0" max="100" /></label>
         <label>Min MF Score<input id="minMF" type="number" min="0" max="100" /></label>
         <label>Min Indicator<input id="minInd" type="number" min="0" max="100" /></label>
+        <label>Min Revision Score<input id="minRevision" type="number" min="0" max="100" /></label>
+        <label>Catalyst Evidence<select id="requireCatalyst"><option value="">不限</option><option value="yes">需要 News / SEC evidence</option></select></label>
       </div>
     </section>
 
@@ -79,7 +81,7 @@
           <label>排序<select id="sortKey">
             <option value="dScore">Consensus</option><option value="sScore">S</option><option value="mScore">M</option><option value="gScore">G</option>
             <option value="waveTrendScore">WT</option><option value="mfScore">MF</option><option value="indicatorScore">Indicator</option>
-            <option value="rvol">RVOL</option><option value="rs20">RS20</option><option value="marketCap">Market Cap</option>
+            <option value="rvol">RVOL</option><option value="rs20">RS20</option><option value="revisionScore">Revision</option><option value="marketCap">Market Cap</option>
           </select></label>
           <label>方向<select id="sortDir"><option value="desc">高至低</option><option value="asc">低至高</option></select></label>
         </div>
@@ -89,7 +91,7 @@
         <table>
           <thead><tr>
             <th>股票</th><th>價格</th><th>S</th><th>M</th><th>G</th><th>Con.</th><th>RVOL</th><th>RS20</th>
-            <th>WT</th><th>MF</th><th>Ind</th><th>Rev Growth</th><th>ROIC</th><th>Sector / Industry</th><th>Pool</th><th>狀態</th>
+            <th>WT</th><th>MF</th><th>Ind</th><th>EPS Rev 4W</th><th>Rev Growth</th><th>ROIC</th><th>Sector / Industry</th><th>Pool</th><th>狀態</th>
           </tr></thead>
           <tbody id="tbody"></tbody>
         </table>
@@ -103,7 +105,19 @@
         <h3>Indicator Engine</h3>
         <p><b>WaveTrend</b>：依使用者提供 Pine 代碼的 9/12/3 與 HLC3 重建，輸出 WT1、WT2、WT-VWAP、最近 Cross、OB/OS。</p>
         <p><b>Market Cipher MF</b>：使用 MF 5/5/60，並以 Price Pivot 5/5 計算 confirmed bullish/bearish divergence。</p>
-        <p><b>時間框架</b>：Yahoo cached Daily bars（1D）。不宣稱與 TradingView 2H/4H 完全相同。</p>
+        <p><b>時間框架</b>：Daily bars（1D）。Nasdaq fallback 為 raw / unadjusted OHLCV；不宣稱與 TradingView vendor bars 完全相同。</p>
+      </div>
+      <div class="researchBox">
+        <div class="researchHead"><div><h3>Analyst Revision & Evidence</h3><p id="researchEvidenceMeta">—</p></div><span id="aiModeChip" class="pill">Research</span></div>
+        <div id="revisionGrid" class="detailGrid compactGrid"></div>
+        <div class="evidenceColumns">
+          <div><h4>Nasdaq News</h4><div id="newsList" class="evidenceList"></div></div>
+          <div><h4>SEC Filings</h4><div id="filingList" class="evidenceList"></div></div>
+        </div>
+      </div>
+      <div class="researchBox">
+        <div class="researchHead"><div><h3>AI Alpha Research</h3><p>只允許使用本次掃描 evidence；缺資料必須標示「資料不足」。</p></div></div>
+        <pre id="aiResearch" class="researchText"></pre>
       </div>
     </section>
 
