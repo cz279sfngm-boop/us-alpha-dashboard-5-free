@@ -1,0 +1,90 @@
+name: Instant AI integration test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/instant-ai-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Supabase client
+        run: npm install --no-save @supabase/supabase-js@2.95.0
+      - name: Test anonymous auth, grounded AI, and rate limit
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { createClient } = require('@supabase/supabase-js');
+
+          const url = 'https://eftqdcninulszcttsgxv.supabase.co';
+          const key = 'sb_publishable_Yhita1G8gXzw-NwZYNm2kQ_TTJUKDD_';
+          const client = createClient(url, key, {
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+          });
+
+          async function main() {
+            const { data: authData, error: authError } = await client.auth.signInAnonymously();
+            if (authError) throw new Error('ANON_AUTH_FAILED: ' + authError.message);
+            if (!authData.session?.access_token) throw new Error('ANON_AUTH_NO_JWT');
+            console.log('ANON_AUTH_OK', authData.user?.is_anonymous === true);
+
+            const evidence = {
+              symbol: 'TEST',
+              name: 'Integration Test',
+              sector: 'Test',
+              industry: 'Test',
+              price: 100,
+              sScore: 70,
+              mScore: 65,
+              gScore: 60,
+              revisionConfidence: '低',
+              news: [],
+              recentFilings: [],
+              dataConfidence: '低'
+            };
+
+            const first = await client.functions.invoke('alpha-research', {
+              body: { evidence }
+            });
+            if (first.error) {
+              const ctx = first.error.context;
+              let body = '';
+              try { body = await ctx?.text(); } catch {}
+              throw new Error('FIRST_CALL_FAILED: ' + first.error.message + ' ' + body);
+            }
+            if (!first.data?.report || !first.data?.grounded) {
+              throw new Error('FIRST_CALL_BAD_PAYLOAD: ' + JSON.stringify(first.data));
+            }
+            console.log('FIRST_CALL_OK', first.data.model, first.data.report.length, first.data.grounded);
+
+            const second = await client.functions.invoke('alpha-research', {
+              body: { evidence }
+            });
+            if (!second.error) {
+              throw new Error('RATE_LIMIT_FAILED_SECOND_CALL_WAS_ALLOWED');
+            }
+            const status = second.error?.context?.status;
+            let body = '';
+            try { body = await second.error?.context?.text(); } catch {}
+            console.log('SECOND_CALL_BLOCKED', status, body);
+            if (status !== 429) {
+              throw new Error('RATE_LIMIT_WRONG_STATUS: ' + status + ' ' + body);
+            }
+            console.log('INTEGRATION_TEST_OK');
+          }
+
+          main().catch((e) => {
+            console.error(e.stack || e);
+            process.exit(1);
+          });
+          NODE
