@@ -116,9 +116,11 @@ async function enforceRateLimit(req: Request, symbol: string) {
     return { ok: false, status: 429, message: "請稍候 30 秒再重新生成" };
   }
 
-  const { error: insertError } = await admin
+  const { data: inserted, error: insertError } = await admin
     .from("ai_research_rate_limits")
-    .insert({ user_id: userId, symbol });
+    .insert({ user_id: userId, symbol })
+    .select("id")
+    .single();
 
   if (insertError) throw insertError;
 
@@ -128,7 +130,7 @@ async function enforceRateLimit(req: Request, symbol: string) {
     .delete()
     .lt("created_at", cleanupBefore);
 
-  return { ok: true, status: 200, message: "ok" };
+  return { ok: true, status: 200, message: "ok", reservationId: inserted?.id ?? null };
 }
 
 Deno.serve(async (req: Request) => {
@@ -163,11 +165,13 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Grounded evidence is required" }, 400, origin);
   }
 
+  let reservationId: number | null = null;
   try {
     const limit = await enforceRateLimit(req, String(evidence.symbol));
     if (!limit.ok) {
       return json({ error: limit.message }, limit.status, origin);
     }
+    reservationId = limit.reservationId ?? null;
   } catch (error) {
     return json({
       error: "Rate limit verification failed",
@@ -201,52 +205,96 @@ news=[NEWS-n]、regulatory filing=[FIL-n]。
 EVIDENCE JSON:
 ${JSON.stringify(evidence)}`;
 
-  try {
+  async function callGemini(model: string) {
     const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
-    const ai = await fetch(url, {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": GEMINI_API_KEY,
-        "Content-Type": "application/json",
+    const body = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: 3200,
+        thinkingConfig: { thinkingLevel: "minimal" },
       },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: 3200,
-          thinkingConfig: { thinkingLevel: "minimal" },
-        },
-      }),
     });
 
-    const payload = await ai.json();
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const ai = await fetch(url, {
+          method: "POST",
+          headers: {
+            "x-goog-api-key": GEMINI_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body,
+        });
 
-    if (!ai.ok) {
-      return json({
-        error: "AI provider error",
-        status: ai.status,
-        detail: payload?.error?.message ?? "unknown",
-      }, 502, origin);
+        const payload = await ai.json();
+
+        if ([429, 500, 502, 503, 504].includes(ai.status)) {
+          lastError = new Error(
+            "Gemini transient HTTP " + ai.status + ": " +
+            (payload?.error?.message ?? "unknown")
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+          continue;
+        }
+
+        if (!ai.ok) {
+          throw new Error(
+            "Gemini HTTP " + ai.status + ": " +
+            (payload?.error?.message ?? "unknown")
+          );
+        }
+
+        const parts = payload?.candidates?.[0]?.content?.parts ?? [];
+        const report = parts
+          .filter((p: { thought?: boolean }) => !p.thought)
+          .map((p: { text?: string }) => p.text ?? "")
+          .join("\n")
+          .trim();
+
+        if (!report) throw new Error("Gemini returned empty output");
+        return { report, model };
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+        }
+      }
     }
 
-    const parts = payload?.candidates?.[0]?.content?.parts ?? [];
-    const report = parts.map((p: { text?: string }) => p.text ?? "").join("\n").trim();
+    throw lastError ?? new Error("Gemini request failed");
+  }
 
-    if (!report) {
-      return json({ error: "AI returned empty output" }, 502, origin);
+  try {
+    let result;
+    try {
+      result = await callGemini(GEMINI_MODEL);
+    } catch (primaryError) {
+      if (GEMINI_MODEL === "gemini-3.5-flash-lite") throw primaryError;
+      result = await callGemini("gemini-3.5-flash-lite");
     }
 
     return json({
-      report,
-      model: GEMINI_MODEL,
+      report: result.report,
+      model: result.model,
       grounded: true,
       generatedAt: new Date().toISOString(),
     }, 200, origin);
   } catch (error) {
+    if (reservationId !== null) {
+      try {
+        await adminClient()
+          .from("ai_research_rate_limits")
+          .delete()
+          .eq("id", reservationId);
+      } catch {}
+    }
+
     return json({
       error: "AI gateway failure",
       detail: String(error).slice(0, 240),
-    }, 500, origin);
+    }, 502, origin);
   }
 });
