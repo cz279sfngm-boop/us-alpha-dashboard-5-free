@@ -1,6 +1,11 @@
 let DB = null;
 let activeTab = "ALL";
 let filtered = [];
+let currentDetailSymbol = null;
+let instantSupabase = null;
+
+const SUPABASE_URL = "https://eftqdcninulszcttsgxv.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Yhita1G8gXzw-NwZYNm2kQ_TTJUKDD_";
 
 const $ = (id) => document.getElementById(id);
 
@@ -226,6 +231,7 @@ function renderTable() {
 function detail(sym) {
   const c = (DB.candidates || []).find((x) => x.symbol === sym);
   if (!c) return;
+  currentDetailSymbol = sym;
 
   $("detailPanel").hidden = false;
   $("detailTitle").textContent = c.symbol + " · Score Explainability";
@@ -298,9 +304,86 @@ function detail(sym) {
     " · Filing: " + (c.filingSource || "資料不足");
   $("aiModeChip").textContent = c.aiResearchMode || "Evidence synthesis";
   $("aiResearch").textContent = c.aiResearch || c.evidenceResearch || "資料不足";
+  $("instantAiStatus").textContent = "預生成 Research 已載入；按下按鈕可用最新 evidence 即時重新生成。";
+  $("instantResearchBtn").disabled = false;
+  $("instantResearchBtn").textContent = "即時生成 AI Research";
 
   $("detailPanel").scrollIntoView({ behavior: "smooth" });
 }
+
+
+async function getInstantSupabase() {
+  if (!window.supabase || !window.supabase.createClient) {
+    throw new Error("Supabase client library 未載入");
+  }
+
+  if (!instantSupabase) {
+    instantSupabase = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_PUBLISHABLE_KEY,
+      {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: false
+        }
+      }
+    );
+  }
+
+  const { data: sessionData, error: sessionError } = await instantSupabase.auth.getSession();
+  if (sessionError) throw sessionError;
+
+  if (!sessionData.session) {
+    const { data, error } = await instantSupabase.auth.signInAnonymously();
+    if (error) throw error;
+    if (!data.session) throw new Error("匿名登入未建立 session");
+  }
+
+  return instantSupabase;
+}
+
+async function runInstantResearch() {
+  if (!currentDetailSymbol || !DB) return;
+
+  const candidate = (DB.candidates || []).find((x) => x.symbol === currentDetailSymbol);
+  if (!candidate) return;
+
+  const btn = $("instantResearchBtn");
+  const status = $("instantAiStatus");
+  btn.disabled = true;
+  btn.textContent = "生成中…";
+  status.textContent = "正在建立安全 session 並以目前 evidence 重新生成研究報告…";
+
+  try {
+    const client = await getInstantSupabase();
+    const { data, error } = await client.functions.invoke("alpha-research", {
+      body: { evidence: candidate }
+    });
+
+    if (error) throw error;
+    if (!data || !data.report) {
+      throw new Error(data?.error || "AI gateway 沒有回傳報告");
+    }
+
+    $("aiResearch").textContent = data.report;
+    $("aiModeChip").textContent = "Instant · " + (data.model || "Gemini");
+    status.textContent =
+      "即時 AI Research 已生成 · " +
+      new Date(data.generatedAt || Date.now()).toLocaleString("zh-HK") +
+      " · grounded=" + String(data.grounded === true);
+    btn.textContent = "重新生成 AI Research";
+  } catch (error) {
+    const message = String(error?.message || error || "Unknown error");
+    status.textContent =
+      "即時模式尚未可用：" + message +
+      "。預生成 Research 仍可正常閱讀。";
+    btn.textContent = "重試即時 AI Research";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 
 function readFilters() {
   const ids = ["sector","industry","theme","horizon","minCap","minPrice","maxPrice","minRvol","minRS","minRev","minRoic","minWT","minMF","minInd","minRevision","requireCatalyst","sortKey","sortDir"];
@@ -361,6 +444,7 @@ function bindEvents() {
   $("saveBtn").onclick = saveFilters;
   $("restoreBtn").onclick = restoreFilters;
   $("exportBtn").onclick = exportCsv;
+  $("instantResearchBtn").onclick = runInstantResearch;
   $("closeDetail").onclick = () => { $("detailPanel").hidden = true; };
 }
 
