@@ -10,6 +10,7 @@
 //   ALLOWED_ORIGIN (defaults to the GitHub Pages production origin)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.95.0";
 
 const ALLOWED_ORIGIN =
   Deno.env.get("ALLOWED_ORIGIN") ??
@@ -51,6 +52,85 @@ function trimEvidence(input: Record<string, unknown>) {
   return Object.fromEntries(allowed.map((k) => [k, input[k]]));
 }
 
+
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const part = token.split(".")[1];
+  if (!part) return {};
+  const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  try {
+    return JSON.parse(atob(padded));
+  } catch {
+    return {};
+  }
+}
+
+function adminClient() {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  let secretKey = "";
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}");
+    secretKey = keys.default ?? Object.values(keys)[0] ?? "";
+  } catch {}
+  secretKey = secretKey || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!supabaseUrl || !secretKey) {
+    throw new Error("Supabase admin credentials unavailable");
+  }
+  return createClient(supabaseUrl, secretKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+async function enforceRateLimit(req: Request, symbol: string) {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const claims = decodeJwtPayload(token);
+  const userId = String(claims.sub ?? "");
+  if (!userId) {
+    throw new Error("Authenticated user id unavailable");
+  }
+
+  const admin = adminClient();
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const cooldownAgo = new Date(Date.now() - 30 * 1000).toISOString();
+
+  const { count, error: countError } = await admin
+    .from("ai_research_rate_limits")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .gte("created_at", hourAgo);
+
+  if (countError) throw countError;
+  if ((count ?? 0) >= 10) {
+    return { ok: false, status: 429, message: "即時 AI 已達每小時 10 次上限" };
+  }
+
+  const { count: recentCount, error: recentError } = await admin
+    .from("ai_research_rate_limits")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .gte("created_at", cooldownAgo);
+
+  if (recentError) throw recentError;
+  if ((recentCount ?? 0) >= 1) {
+    return { ok: false, status: 429, message: "請稍候 30 秒再重新生成" };
+  }
+
+  const { error: insertError } = await admin
+    .from("ai_research_rate_limits")
+    .insert({ user_id: userId, symbol });
+
+  if (insertError) throw insertError;
+
+  const cleanupBefore = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  await admin
+    .from("ai_research_rate_limits")
+    .delete()
+    .lt("created_at", cleanupBefore);
+
+  return { ok: true, status: 200, message: "ok" };
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin");
 
@@ -81,6 +161,18 @@ Deno.serve(async (req: Request) => {
 
   if (!evidence || !evidence.symbol) {
     return json({ error: "Grounded evidence is required" }, 400, origin);
+  }
+
+  try {
+    const limit = await enforceRateLimit(req, String(evidence.symbol));
+    if (!limit.ok) {
+      return json({ error: limit.message }, limit.status, origin);
+    }
+  } catch (error) {
+    return json({
+      error: "Rate limit verification failed",
+      detail: String(error).slice(0, 220),
+    }, 500, origin);
   }
 
   const prompt = `你是機構級美股研究助理。只允許使用 EVIDENCE JSON。
