@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#06111a" />
   <title>US Multi-Horizon Alpha Dashboard 5.1 Free</title>
   <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.95.0/dist/umd/supabase.min.js"></script>
 </head>
 <body>
   <main class="shell">
@@ -116,7 +117,14 @@
         </div>
       </div>
       <div class="researchBox">
-        <div class="researchHead"><div><h3>AI Alpha Research</h3><p>只允許使用本次掃描 evidence；缺資料必須標示「資料不足」。</p></div></div>
+        <div class="researchHead">
+          <div>
+            <h3>AI Alpha Research</h3>
+            <p>只允許使用本次掃描 evidence；缺資料必須標示「資料不足」。</p>
+            <p id="instantAiStatus" class="instantAiStatus">預生成 Research 可直接閱讀；即時模式會在需要時建立匿名 Supabase session。</p>
+          </div>
+          <button id="instantResearchBtn" type="button">即時生成 AI Research</button>
+        </div>
         <pre id="aiResearch" class="researchText"></pre>
       </div>
     </section>
